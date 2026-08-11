@@ -18,6 +18,7 @@ class IncidentStatus(StrEnum):
     STAGING_VERIFIED = "STAGING_VERIFIED"
     AWAITING_APPROVAL = "AWAITING_APPROVAL"
     APPROVED = "APPROVED"
+    PR_CREATION_FAILED = "PR_CREATION_FAILED"
 
 
 @dataclass
@@ -31,9 +32,13 @@ class IncidentContext:
     source_commit: str
     created_at: str
     status: IncidentStatus = IncidentStatus.TRIAGED
+    issue_url: str = ""
+    repository: str = ""
+    repository_ref: str = ""
+    delivery_id: str = ""
 
     @classmethod
-    def from_issue(cls, issue_number: int, title: str) -> "IncidentContext":
+    def from_issue(cls, issue_number: int, title: str, **metadata: str) -> "IncidentContext":
         identifier = uuid4().hex[:12]
         return cls(
             incident_id=f"inc-{identifier}",
@@ -44,6 +49,7 @@ class IncidentContext:
             severity="HIGH",
             source_commit="8f3c2a1",
             created_at=datetime.now(UTC).isoformat(),
+            **metadata,
         )
 
 
@@ -61,6 +67,15 @@ class RootCauseAnalysis:
     culprit_commit: str
     proposed_patch: str
     evidence: list[Evidence]
+
+
+@dataclass(frozen=True)
+class InvestigationProposal:
+    root_cause: str
+    confidence: float
+    proposed_patch: str
+    file_path: str
+    replacement: str
 
 
 @dataclass

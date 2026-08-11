@@ -3,9 +3,12 @@
 ## Status legend
 
 - `✅ Complete` means every task in that phase or milestone is delivered.
+- `🔄 In progress` means implementation is delivered but its live proof or final
+  documentation is still pending.
 - `⬜ Planned` means the work remains future scope.
-- Checked work below describes the local, simulated hackathon MVP only. It is not
-  evidence of production GitHub, ADK, MCP, Google Cloud, or deployment capability.
+- Checked Phase 1 work describes the local, simulated hackathon MVP only. It is
+  not evidence of production GitHub, ADK, MCP, Google Cloud, or deployment
+  capability.
 
 ## Phase 1 — Constrained Hackathon MVP `✅ Complete`
 
@@ -33,8 +36,9 @@
 
 ### Milestone 1.3 — Human review and reproducible demo `✅ Complete`
 
-- [x] Render the incident, evidence, diff, sandbox verification, and approval
-  state in the lightweight `nightzero/web.py` reviewer card.
+- [x] Serve incident, evidence, diff, sandbox verification, and approval state
+  through the Agent REST API and render it in the standalone
+  `NightZero-ControlPanel`.
 - [x] Require the demo authorization token before recording a simulated PR
   approval; do not write a remote branch or deploy production.
 - [x] Test sandbox fail-before/pass-after behavior, target non-mutation,
@@ -43,29 +47,70 @@
   three-minute demo narrative in `README.md`, `docs/MVP_SCENARIO.md`, and
   `docs/DEMO.md`.
 
-## Phase 2 — Real open-source remediation loop `⬜ Planned`
+## Phase 2 — Real open-source remediation loop `🔄 In progress`
 
-### Milestone 2.1 — GitHub and ADK integration `⬜ Planned`
+### Milestone 2.1 — Authenticated GitHub issue-label intake and evidence `✅ Complete`
 
-- [ ] Trigger workflows from GitHub Actions, webhooks, issue comments, or
-  scheduled maintainer jobs.
-- [ ] Execute Gemini-backed ADK agents rather than only declaring agents in
-  `nightzero/adk_agents.py`.
-- [ ] Add authenticated, least-privilege GitHub reads for issues, commits,
-  pull requests, and repository content.
-- [ ] Create real isolated branches, pull requests, and incident comments with
-  GitHub API write permissions scoped to approved repositories.
+- [x] Accept signed GitHub `issues` webhook deliveries only for the allowlisted
+  repository, `labeled` action, and `nightzero:investigate` label.
+- [x] Reject invalid signatures and unsupported deliveries without workflow side
+  effects, and reuse the original incident for duplicate delivery IDs.
+- [x] Read the source issue, repository content, and commit history through an
+  Agent-owned, least-privilege GitHub gateway.
+- [x] Persist the delivery ID, source issue metadata, repository reference, and
+  GitHub tool-call evidence without serializing credentials.
 
-### Milestone 2.2 — Evidence tooling and agent orchestration `⬜ Planned`
+### Milestone 2.2 — Bounded ADK investigation and sandbox verification `✅ Complete`
 
-- [ ] Implement MCP adapters for GitHub, repository inspection, and Google
-  Search Grounding with captured tool-call evidence.
-- [ ] Use ADK session state to orchestrate triage, RCA, remediation, and review
-  instead of the deterministic local workflow.
-- [ ] Ground dependency-drift and crash-report remediation in official upstream
-  documentation and repository history.
-- [ ] Run each candidate fix in an ephemeral CI container with its repository's
-  actual test suite.
+- [x] Invoke the declared Gemini/ADK triage and RCA agents through a bounded
+  orchestration layer with typed evidence and structured outputs.
+- [x] Reject invalid model patch proposals before any repository write.
+- [x] Validate permitted candidate patches in an isolated clone using the target
+  repository's real fail-before/pass-after unit-test command.
+- [x] Capture model and verification evidence in persisted incident artifacts.
+
+### Milestone 2.3 — Approved draft remediation PR `✅ Complete`
+
+- [x] Keep a verified candidate local until Control Panel approval authorizes a
+  fresh sanitized `nightzero/<incident-id>` branch.
+- [x] Commit and push the verified change, create exactly one draft pull request,
+  and comment concise RCA and verification evidence on the source issue.
+- [x] Persist remote branch, commit, pull-request number/URL, progress, and
+  recoverable GitHub-write failure state.
+- [x] Display source-issue links, real PR metadata, terminal PR status, and
+  write failures in `NightZero-ControlPanel`.
+
+### Milestone 2.4 — Live proof and secure operator documentation `🔄 In progress`
+
+- [x] Add mocked Agent and Control Panel coverage for webhook validation,
+  filtering, idempotency, evidence persistence, approval, PR lifecycle, and
+  GitHub-write failure states.
+- [x] Provide ignored Agent and Control Panel `.env` templates and document
+  scoped GitHub, webhook-secret, Gemini, CORS, and sandbox configuration.
+- [x] Provide a local Cloudflare tunnel helper and document temporary webhook
+  endpoint registration.
+- [ ] Run the opt-in live proof with a dedicated labeled issue, inspect its
+  evidence, approve once, and confirm the remote branch, draft PR, and issue
+  comment.
+- [ ] Document the live-proof cleanup and rollback procedure after it has been
+  exercised with scoped credentials.
+
+### Milestone 2.5 — Hosted hackathon deployment `🔄 In progress`
+
+- [x] Create the private `NightZero-Infrastructure` repository with Terraform
+  for the Google APIs, Artifact Registry, Firestore, Secret Manager containers,
+  Firebase project/Hosting site, least-privilege Agent identity, and Cloud Run
+  topology.
+- [x] Add a bootstrap-safe deployment wrapper and Firebase Hosting configuration
+  that keep secrets outside Terraform state and the Control Panel build.
+- [x] Provision the `nightzero` Google Cloud foundation: required APIs,
+  Artifact Registry, Firestore, Secret Manager containers, Agent runtime IAM,
+  Firebase project linkage, and the default Hosting site.
+- [x] Add Firestore persistence, Firebase reviewer-token verification, and
+  runtime-only HTTPS clone credentials to the Agent.
+- [ ] Build and publish the Agent image, deploy Cloud Run, publish the Control
+  Panel to Firebase Hosting, update the GitHub webhook URL, and run the hosted
+  smoke test before the hackathon demo.
 
 ## Phase 3 — Google Cloud incident remediation `⬜ Planned`
 

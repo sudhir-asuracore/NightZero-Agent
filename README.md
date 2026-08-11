@@ -20,9 +20,10 @@ The Agent owns the remediation workflow, sandbox checkout, artifacts, and any fu
 Use Python 3.11+ and an SSH identity that has read access to `NightZero-TestProject`:
 
 ```bash
+cp .env.example .env
+# Edit .env with the Agent-only credentials, then load it into this shell.
+set -a && source .env && set +a
 python -m unittest discover -s tests -v
-NIGHTZERO_TARGET_REPOSITORY_URL=git@github.com:sudhir-asuracore/NightZero-TestProject.git \
-NIGHTZERO_CORS_ORIGIN=http://localhost:5173 \
 python -m nightzero
 ```
 
@@ -35,9 +36,19 @@ The Agent API listens on `http://localhost:8080` by default:
 
 Set `PORT` to change the listener and `NIGHTZERO_CORS_ORIGIN` to the exact Control Panel origin. Approval requires the demo-only token `nightzero-demo`; inspect persisted evidence in the ignored `artifacts/` directory.
 
+## Local GitHub webhook tunnel
+
+GitHub needs a public HTTPS destination and cannot call `localhost` directly. With the Agent running, install [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) and run:
+
+```bash
+./scripts/start-github-webhook-tunnel.sh
+```
+
+The script verifies `http://127.0.0.1:${PORT:-8080}/health`, then starts a temporary Cloudflare Quick Tunnel. Copy the printed HTTPS URL and configure GitHub's webhook payload URL as `<printed-url>/api/v1/webhooks/github`. The URL changes whenever the tunnel restarts; stop it with `Ctrl+C` after testing.
+
 ## Credential boundary
 
-For this MVP, the Agent needs only an SSH credential that can clone `NightZero-TestProject`. Future branch/PR automation must use a dedicated GitHub credential scoped only to that repository, with no deployment credentials. Do not put GitHub tokens, SSH private keys, or approval secrets in the Control Panel environment or source tree.
+Copy `.env.example` to the ignored `.env` file and supply the values locally. For live remediation, create a fine-grained GitHub token scoped only to `NightZero-TestProject` with `Contents`, `Issues`, and `Pull requests` read/write access; configure the same `NIGHTZERO_WEBHOOK_SECRET` in GitHub's Issues webhook; and set `GOOGLE_API_KEY` for Gemini/ADK. Do not put GitHub tokens, webhook secrets, SSH private keys, or approval secrets in the Control Panel environment or source tree.
 
 ## Demo narrative
 
