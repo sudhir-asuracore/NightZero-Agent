@@ -63,11 +63,14 @@ class NightZeroWorkflow:
         repository = os.environ.get("NIGHTZERO_GITHUB_REPOSITORY", "sudhir-asuracore/NightZero-TestProject")
         context = IncidentContext(
             incident_id=incident_id,
+            session_id=f"incident-{incident_id}",
+            issue_number=142,
             title="Deploying simulated outage...",
             service="demo-payment-gateway",
             severity="PENDING",
+            source_commit="pending",
+            created_at=datetime.now(UTC).isoformat(),
             status=IncidentStatus.INGESTING,
-            issue_number=142,
             repository=repository,
         )
         audit = [
@@ -92,9 +95,13 @@ class NightZeroWorkflow:
         incident_id = f"inc-gcp-{uuid4().hex[:6]}"
         context = IncidentContext(
             incident_id=incident_id,
+            session_id=f"incident-{incident_id}",
+            issue_number=0,
             title=f"GCP Cloud Logging Alert: {service_name}",
             service=service_name,
             severity=severity,
+            source_commit="unknown",
+            created_at=datetime.now(UTC).isoformat(),
             status=IncidentStatus.INGESTING,
             delivery_id=delivery_id,
             repository=os.environ.get("NIGHTZERO_GITHUB_REPOSITORY", "sudhir-asuracore/NightZero-TestProject"),
