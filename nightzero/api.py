@@ -31,11 +31,26 @@ class AgentApiHandler(BaseHTTPRequestHandler):
         self._respond({}, 204)
 
     def do_GET(self) -> None:  # noqa: N802
-        path = self.path.rstrip("/")
+        import urllib.parse
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path.rstrip("/")
         if path == "/health":
             self._respond({"status": "IDLE"})
         elif path == "/api/v1/incidents":
-            self._respond([self._summary(record) for record in self.server.store.list()])
+            query = urllib.parse.parse_qs(parsed.query)
+            try:
+                limit = int(query.get("limit", ["50"])[0])
+                offset = int(query.get("offset", ["0"])[0])
+            except ValueError:
+                limit, offset = 50, 0
+            
+            all_records = self.server.store.list()
+            total = len(all_records)
+            paginated = [self._summary(record) for record in all_records[offset:offset+limit]]
+            
+            # Return as a dictionary with metadata so frontend can do proper pagination,
+            # but if it breaks the frontend, frontend will be updated next.
+            self._respond({"incidents": paginated, "total": total})
         elif path.startswith("/api/v1/incidents/"):
             record = self.server.store.get(path.rsplit("/", 1)[1])
             self._respond(record.to_dict() if record else {"error": "Incident not found"}, 200 if record else 404)
