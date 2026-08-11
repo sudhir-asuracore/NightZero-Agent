@@ -106,8 +106,8 @@ class AuditEvent:
 @dataclass
 class IncidentRecord:
     context: IncidentContext
-    rca: RootCauseAnalysis
-    verification: RemediationVerificationReport
+    rca: RootCauseAnalysis | None
+    verification: RemediationVerificationReport | None
     audit_events: list[AuditEvent] = field(default_factory=list)
     approval: dict[str, Any] | None = None
 
@@ -117,19 +117,25 @@ class IncidentRecord:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "IncidentRecord":
         context = value["context"]
-        verification = value["verification"]
+        
+        rca_val = value.get("rca")
+        rca = RootCauseAnalysis(
+            **{**rca_val, "evidence": [Evidence(**item) for item in rca_val.get("evidence", [])]}
+        ) if rca_val else None
+
+        verification_val = value.get("verification")
+        verification = RemediationVerificationReport(
+            **{
+                **verification_val,
+                "before": CommandResult(**verification_val["before"]),
+                "after": CommandResult(**verification_val["after"]),
+            }
+        ) if verification_val else None
+
         return cls(
             context=IncidentContext(**{**context, "status": IncidentStatus(context["status"])}),
-            rca=RootCauseAnalysis(
-                **{**value["rca"], "evidence": [Evidence(**item) for item in value["rca"]["evidence"]]}
-            ),
-            verification=RemediationVerificationReport(
-                **{
-                    **verification,
-                    "before": CommandResult(**verification["before"]),
-                    "after": CommandResult(**verification["after"]),
-                }
-            ),
+            rca=rca,
+            verification=verification,
             audit_events=[AuditEvent(**item) for item in value.get("audit_events", [])],
             approval=value.get("approval"),
         )
