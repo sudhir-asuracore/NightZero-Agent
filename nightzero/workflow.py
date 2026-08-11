@@ -329,7 +329,7 @@ class NightZeroWorkflow:
 
     def _clone_url(self) -> str:
         token = os.environ.get("NIGHTZERO_GIT_CLONE_TOKEN")
-        repository = os.environ.get("NIGHTZERO_GITHUB_REPOSITORY")
+        repository = os.environ.get("NIGHTZERO_GITHUB_REPOSITORY", "sudhir-asuracore/NightZero-TestProject")
         if token and repository:
             return f"https://github.com/{repository}.git"
         return self.target_repository_url
@@ -353,7 +353,7 @@ class NightZeroWorkflow:
     def _run_git(command: list[str], cwd: Path | None = None, environment: dict[str, str] | None = None) -> None:
         completed = subprocess.run(["git", *command], cwd=cwd, env=environment, capture_output=True, text=True, check=False)
         if completed.returncode:
-            raise RuntimeError("Git sandbox setup failed")
+            raise RuntimeError(f"Git sandbox setup failed: {completed.stderr}")
 
     @staticmethod
     def _event(action: str, detail: str) -> AuditEvent:

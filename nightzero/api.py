@@ -153,6 +153,8 @@ class AgentApiHandler(BaseHTTPRequestHandler):
             record = self.server.workflow.run_gcp_logging_incident(delivery_id, service_name, log_payload, severity, gateway, self.server.investigator)
             self._respond(record.to_dict(), 200)
         except (RuntimeError, ValueError) as error:
+            import traceback
+            traceback.print_exc()
             self._respond({"error": str(error)}, 502)
 
     def _valid_signature(self, body: bytes) -> bool:
