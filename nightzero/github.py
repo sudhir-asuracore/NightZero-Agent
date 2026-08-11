@@ -96,9 +96,20 @@ class GitHubApiGateway(GitHubGateway):
     def commit_pricing_replacement(self, repository: str, branch: str, file_path: str, replacement: str) -> str:
         source = self._get(f"/repos/{repository}/contents/{file_path}?ref={branch}")
         original = base64.b64decode(source["content"]).decode("utf-8")
-        patched = original.replace('return f"${cents // 100}.00"', replacement)
-        if patched == original:
+        
+        if 'return f"${cents // 100}.00"' in original:
+            patched = original.replace('return f"${cents // 100}.00"', replacement)
+        elif replacement in original:
+            patched = original
+        else:
+            import re
+            patched = re.sub(r'return f"\${cents // 100}\.00"', replacement, original)
+            if patched == original:
+                patched = original.replace('return f"${cents // 100}.00"', replacement)
+                
+        if patched == original and replacement not in original:
             raise RuntimeError("Verified pricing replacement was not found in the branch")
+            
         result = self._request("PUT", f"/repos/{repository}/contents/{file_path}", {
             "message": "Fix checkout total decimal formatting",
             "content": base64.b64encode(patched.encode("utf-8")).decode("ascii"),
