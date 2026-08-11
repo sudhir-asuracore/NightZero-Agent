@@ -117,7 +117,8 @@ class AgentApiHandler(BaseHTTPRequestHandler):
 
     def _handle_simulate_incident(self) -> None:
         try:
-            record = self.server.workflow.simulate_outage()
+            gateway = self.server.github or GitHubApiGateway()
+            record = self.server.workflow.simulate_outage(gateway)
             self._respond(record.to_dict(), 201)
         except Exception as error:
             self._respond({"error": str(error)}, 500)

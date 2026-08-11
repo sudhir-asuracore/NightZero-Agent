@@ -58,25 +58,31 @@ class NightZeroWorkflow:
         self.artifact_store.save(record)
         return record
 
-    def simulate_outage(self) -> IncidentRecord:
+    def simulate_outage(self, gateway: GitHubGateway | None = None) -> IncidentRecord:
         incident_id = f"inc-sim-{uuid4().hex[:6]}"
+        repository = os.environ.get("NIGHTZERO_GITHUB_REPOSITORY", "sudhir-asuracore/NightZero-TestProject")
         context = IncidentContext(
             incident_id=incident_id,
-            title="SIMULATED OUTAGE: Integer division drops cents in checkout service",
+            title="Deploying simulated outage...",
             service="demo-payment-gateway",
-            severity="CRITICAL",
+            severity="PENDING",
             status=IncidentStatus.INGESTING,
             issue_number=142,
-            repository=os.environ.get("NIGHTZERO_GITHUB_REPOSITORY", "sudhir-asuracore/NightZero-TestProject"),
+            repository=repository,
         )
         audit = [
-            self._event("simulation.triggered", "User triggered live outage simulation from Control Panel"),
-            self._event("gcp.logging.ingested", "Captured SEVERITY=ERROR stack trace: TypeError in checkout/pricing calculation"),
+            self._event("simulation.triggered", f"Pushing breaking commit to {repository}"),
+            self._event("simulation.deploying", "Awaiting GitHub Actions deployment and GCP Cloud Logging alert... (This takes 3-4 minutes)"),
         ]
-        rca = self._investigate(context, audit)
-        verification = self._verify_in_sandbox(rca, audit)
-        context.status = IncidentStatus.AWAITING_APPROVAL
-        record = IncidentRecord(context, rca, verification, audit)
+        
+        if gateway:
+            try:
+                gateway.commit_pricing_replacement(repository, "main", "demo_target/pricing.py", 'return f"${cents // 100}.00"')
+                audit.append(self._event("simulation.pushed", "Breaking commit successfully pushed. CI/CD pipeline triggered."))
+            except Exception as e:
+                audit.append(self._event("simulation.error", f"Failed to push commit: {e}"))
+                
+        record = IncidentRecord(context, None, None, audit)
         self.artifact_store.save(record)
         return record
 
