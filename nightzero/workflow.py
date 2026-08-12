@@ -91,6 +91,12 @@ class NightZeroWorkflow:
             existing = self.artifact_store.get(claimed_id)
             if existing:
                 return existing
+        
+        # Deduplicate multiple logs from the same outage by checking for an active incident for this service
+        for existing in self.artifact_store.list():
+            if existing.context.service == service_name and existing.context.status not in (IncidentStatus.APPROVED, IncidentStatus.PR_CREATION_FAILED):
+                # Optionally, could append this new log payload as evidence to the existing incident
+                return existing
         audit = [
             self._event("gcp.logging.webhook", f"Received Cloud Logging alert sink event {delivery_id}"),
             self._event("gcp.logging.stacktrace", f"Extracted log payload: {log_payload[:150]}..."),
