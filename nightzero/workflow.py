@@ -58,36 +58,16 @@ class NightZeroWorkflow:
         self.artifact_store.save(record)
         return record
 
-    def simulate_outage(self, gateway: GitHubGateway | None = None) -> IncidentRecord:
-        incident_id = f"inc-sim-{uuid4().hex[:6]}"
+    def simulate_outage(self, gateway: GitHubGateway | None = None) -> dict[str, str]:
         repository = os.environ.get("NIGHTZERO_GITHUB_REPOSITORY", "sudhir-asuracore/NightZero-TestProject")
-        context = IncidentContext(
-            incident_id=incident_id,
-            session_id=f"incident-{incident_id}",
-            issue_number=142,
-            title="Deploying simulated outage...",
-            service="demo-payment-gateway",
-            severity="PENDING",
-            source_commit="pending",
-            created_at=datetime.now(UTC).isoformat(),
-            status=IncidentStatus.INGESTING,
-            repository=repository,
-        )
-        audit = [
-            self._event("simulation.triggered", f"Pushing breaking commit to {repository}"),
-            self._event("simulation.deploying", "Awaiting GitHub Actions deployment and GCP Cloud Logging alert... (This takes 3-4 minutes)"),
-        ]
         
         if gateway:
             try:
                 gateway.commit_pricing_replacement(repository, "main", "demo_target/pricing.py", 'return f"${cents // 100}.00"')
-                audit.append(self._event("simulation.pushed", "Breaking commit successfully pushed. CI/CD pipeline triggered."))
             except Exception as e:
-                audit.append(self._event("simulation.error", f"Failed to push commit: {e}"))
+                raise RuntimeError(f"Failed to push commit: {e}")
                 
-        record = IncidentRecord(context, None, None, audit)
-        self.artifact_store.save(record)
-        return record
+        return {"status": "Deploying simulated outage. A real incident will trigger shortly."}
 
     def run_gcp_logging_incident(
         self, delivery_id: str, service_name: str, log_payload: str, severity: str = "CRITICAL", gateway: GitHubGateway | None = None, investigator: InvestigationRunner | None = None
