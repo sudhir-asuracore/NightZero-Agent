@@ -12,6 +12,7 @@ class IncidentStore(Protocol):
     def list(self) -> list[IncidentRecord]: ...
     def get_by_delivery_id(self, delivery_id: str) -> IncidentRecord | None: ...
     def claim_delivery_id(self, delivery_id: str, incident_id: str) -> str | None: ...
+    def clear_all(self) -> None: ...
 
 
 class ArtifactStore:
@@ -45,6 +46,10 @@ class ArtifactStore:
     def claim_delivery_id(self, delivery_id: str, incident_id: str) -> str | None:
         record = self.get_by_delivery_id(delivery_id)
         return record.context.incident_id if record else None
+
+    def clear_all(self) -> None:
+        for path in self.directory.glob("inc-*.json"):
+            path.unlink()
 
 
 class FirestoreArtifactStore:
@@ -94,6 +99,12 @@ class FirestoreArtifactStore:
             return None
 
         return claim(transaction)
+
+    def clear_all(self) -> None:
+        for snapshot in self.records.stream():
+            snapshot.reference.delete()
+        for snapshot in self.deliveries.stream():
+            snapshot.reference.delete()
 
     @staticmethod
     def _delivery_document_id(delivery_id: str) -> str:
