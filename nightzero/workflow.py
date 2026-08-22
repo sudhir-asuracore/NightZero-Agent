@@ -85,6 +85,7 @@ class NightZeroWorkflow:
             status=IncidentStatus.INGESTING,
             delivery_id=delivery_id,
             repository=os.environ.get("NIGHTZERO_GITHUB_REPOSITORY", "sudhir-asuracore/NightZero-TestProject"),
+            repository_ref="main",
         )
         claimed_id = self.artifact_store.claim_delivery_id(delivery_id, incident_id)
         if claimed_id:
@@ -165,27 +166,48 @@ class NightZeroWorkflow:
         approval.update({"actor": actor, "approved_at": datetime.now(UTC).isoformat(), "action": "PULL_REQUEST_PENDING", "branch": branch})
         record.approval = approval
         try:
+            # 1. Resolve source_commit if "unknown" or empty
+            source_commit = record.context.source_commit
+            if not source_commit or source_commit == "unknown":
+                try:
+                    repo_info = gateway.get_repository(record.context.repository)
+                    default_ref = repo_info.default_branch
+                except Exception:
+                    default_ref = "main"
+                try:
+                    evidence = gateway.get_repository_evidence(record.context.repository, default_ref)
+                    source_commit = evidence.commit_sha
+                except Exception:
+                    source_commit = ""
+                record.context.source_commit = source_commit
+                if not record.context.repository_ref:
+                    record.context.repository_ref = default_ref
+
             if not approval.get("branch_created"):
                 gateway.create_branch(record.context.repository, branch, record.context.source_commit)
                 approval["branch_created"] = True
                 self.artifact_store.save(record)
             if not approval.get("commit_sha"):
+                replacement = record.rca.proposed_patch if hasattr(record.rca, "proposed_patch") and "return" in record.rca.proposed_patch else 'return f"${cents / 100:.2f}"'
                 approval["commit_sha"] = gateway.commit_pricing_replacement(
-                    record.context.repository, branch, record.verification.file_path, 'return f"${cents / 100:.2f}"'
+                    record.context.repository, branch, record.verification.file_path, replacement
                 )
                 self.artifact_store.save(record)
             if not approval.get("pr_number"):
+                base_ref = record.context.repository_ref or "main"
+                issue_info = f"for #{record.context.issue_number}" if record.context.issue_number and record.context.issue_number > 0 else f"for incident {record.context.incident_id}"
                 pull_request = gateway.create_draft_pull_request(
-                    record.context.repository, branch, record.context.repository_ref, record.context.title,
-                    f"Automated verified remediation for #{record.context.issue_number}.\n\n{record.verification.diff}",
+                    record.context.repository, branch, base_ref, record.context.title,
+                    f"Automated verified remediation {issue_info}.\n\n```diff\n{record.verification.diff}\n```",
                 )
                 approval.update({"pr_number": pull_request.number, "pr_url": pull_request.url})
                 self.artifact_store.save(record)
             if not approval.get("issue_commented"):
-                gateway.add_issue_comment(
-                    record.context.repository, record.context.issue_number,
-                    f"NightZero created draft PR #{approval['pr_number']}: {approval['pr_url']}",
-                )
+                if record.context.issue_number and record.context.issue_number > 0:
+                    gateway.add_issue_comment(
+                        record.context.repository, record.context.issue_number,
+                        f"NightZero created draft PR #{approval['pr_number']}: {approval['pr_url']}",
+                    )
                 approval["issue_commented"] = True
             approval["action"] = "DRAFT_PULL_REQUEST_CREATED"
             record.context.status = IncidentStatus.APPROVED
@@ -339,7 +361,7 @@ class NightZeroWorkflow:
     def _run_git(command: list[str], cwd: Path | None = None, environment: dict[str, str] | None = None) -> None:
         completed = subprocess.run(["git", *command], cwd=cwd, env=environment, capture_output=True, text=True, check=False)
         if completed.returncode:
-            raise RuntimeError(f"Git sandbox setup failed: {completed.stderr}")
+            raise RuntimeError("Git sandbox setup failed")
 
     @staticmethod
     def _event(action: str, detail: str) -> AuditEvent:

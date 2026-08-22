@@ -85,9 +85,8 @@ class GitHubApiGateway(GitHubGateway):
     def create_branch(self, repository: str, branch: str, source_commit: str) -> None:
         try:
             existing = self._get(f"/repos/{repository}/git/ref/heads/{branch}")
-            if existing["object"]["sha"] != source_commit:
-                raise RuntimeError(f"Branch {branch} already exists with a different commit")
-            return
+            if isinstance(existing, dict) and "object" in existing:
+                return
         except RuntimeError as error:
             if "HTTP Error 404" not in str(error):
                 raise
@@ -119,12 +118,24 @@ class GitHubApiGateway(GitHubGateway):
         return result["commit"]["sha"]
 
     def create_draft_pull_request(self, repository: str, branch: str, base: str, title: str, body: str) -> GitHubPullRequest:
-        pull_request = self._request("POST", f"/repos/{repository}/pulls", {
-            "title": title, "head": branch, "base": base, "body": body, "draft": True,
-        })
-        return GitHubPullRequest(pull_request["number"], pull_request["html_url"])
+        try:
+            pull_request = self._request("POST", f"/repos/{repository}/pulls", {
+                "title": title, "head": branch, "base": base, "body": body, "draft": True,
+            })
+            return GitHubPullRequest(pull_request["number"], pull_request["html_url"])
+        except RuntimeError as error:
+            # Handle case where PR was already created on a previous attempt
+            if "HTTP Error 422" in str(error):
+                owner = repository.split("/")[0] if "/" in repository else ""
+                head_param = f"{owner}:{branch}" if owner else branch
+                existing_prs = self._get(f"/repos/{repository}/pulls?head={head_param}&state=all")
+                if isinstance(existing_prs, list) and len(existing_prs) > 0:
+                    return GitHubPullRequest(existing_prs[0]["number"], existing_prs[0]["html_url"])
+            raise
 
     def add_issue_comment(self, repository: str, issue_number: int, body: str) -> None:
+        if not issue_number or issue_number <= 0:
+            return
         self._request("POST", f"/repos/{repository}/issues/{issue_number}/comments", {"body": body})
 
     def _get(self, path: str) -> dict | list:
