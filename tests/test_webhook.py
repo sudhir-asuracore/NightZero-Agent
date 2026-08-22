@@ -143,3 +143,40 @@ class GitHubWebhookTest(unittest.TestCase):
         connection.request("POST", f"/api/v1/incidents/{incident_id}/approve", b"{}", headers)
         response = connection.getresponse()
         return response.status, json.loads(response.read())
+
+    def test_pull_request_merged_resolves_incident(self) -> None:
+        record = self.server.workflow.run_seeded_issue()
+        record.approval = {"pr_number": 42, "branch": "nightzero/inc-test"}
+        record.context.status = "APPROVED"
+        self.server.store.save(record)
+
+        payload = {
+            "action": "closed",
+            "repository": {"full_name": "sudhir-asuracore/NightZero-TestProject"},
+            "pull_request": {
+                "number": 42,
+                "html_url": "https://github.com/sudhir-asuracore/NightZero-TestProject/pull/42",
+                "merged": True,
+                "head": {"ref": "nightzero/inc-test"},
+                "merged_by": {"login": "octocat"},
+            },
+        }
+        body = json.dumps(payload).encode()
+        headers = {
+            "Content-Type": "application/json",
+            "X-GitHub-Event": "pull_request",
+            "X-GitHub-Delivery": "delivery-pr-merge",
+            "X-Hub-Signature-256": "sha256=" + hmac.new(b"secret", body, hashlib.sha256).hexdigest(),
+        }
+        with patch.dict(os.environ, {"NIGHTZERO_WEBHOOK_SECRET": "secret"}):
+            connection = http.client.HTTPConnection(*self.server.server_address)
+            connection.request("POST", "/api/v1/webhooks/github", body, headers)
+            response = connection.getresponse()
+            self.assertEqual(200, response.status)
+            res_data = json.loads(response.read())
+            self.assertTrue(res_data.get("resolved"))
+
+        updated = self.server.store.get(record.context.incident_id)
+        self.assertEqual("RESOLVED", updated.context.status)
+        self.assertEqual("PULL_REQUEST_MERGED", updated.approval.get("action"))
+        self.assertEqual("octocat", updated.approval.get("merged_by"))

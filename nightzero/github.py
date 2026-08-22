@@ -138,6 +138,10 @@ class GitHubApiGateway(GitHubGateway):
             return
         self._request("POST", f"/repos/{repository}/issues/{issue_number}/comments", {"body": body})
 
+    def get_pull_request(self, repository: str, number: int) -> dict:
+        data = self._get(f"/repos/{repository}/pulls/{number}")
+        return data if isinstance(data, dict) else {}
+
     def _get(self, path: str) -> dict | list:
         return self._request("GET", path)
 

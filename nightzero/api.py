@@ -52,7 +52,11 @@ class AgentApiHandler(BaseHTTPRequestHandler):
             # but if it breaks the frontend, frontend will be updated next.
             self._respond({"incidents": paginated, "total": total})
         elif path.startswith("/api/v1/incidents/"):
-            record = self.server.store.get(path.rsplit("/", 1)[1])
+            incident_id = path.rsplit("/", 1)[1]
+            record = self.server.store.get(incident_id)
+            if record:
+                gateway = self.server.github or GitHubApiGateway()
+                record = self.server.workflow.sync_incident_status(record, gateway)
             self._respond(record.to_dict() if record else {"error": "Incident not found"}, 200 if record else 404)
         else:
             self._respond({"error": "Not found"}, 404)
@@ -110,7 +114,8 @@ class AgentApiHandler(BaseHTTPRequestHandler):
 
     def _handle_github_webhook(self) -> None:
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-        if self.headers.get("X-GitHub-Event") != "issues" or not self._valid_signature(body):
+        event = self.headers.get("X-GitHub-Event")
+        if event not in ("issues", "pull_request") or not self._valid_signature(body):
             self._respond({"error": "Invalid GitHub webhook"}, 401)
             return
         try:
@@ -118,6 +123,29 @@ class AgentApiHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._respond({"error": "Invalid JSON"}, 400)
             return
+
+        if event == "pull_request":
+            action = payload.get("action")
+            pr = payload.get("pull_request", {})
+            merged = pr.get("merged", False)
+            if action == "closed" and merged:
+                repository = payload.get("repository", {}).get("full_name", "")
+                pr_number = pr.get("number")
+                pr_url = pr.get("html_url", "")
+                branch = pr.get("head", {}).get("ref", "")
+                merged_by = (pr.get("merged_by") or {}).get("login", "")
+                record = self.server.workflow.handle_pull_request_merged(
+                    repository=repository,
+                    pr_number=pr_number,
+                    pr_url=pr_url,
+                    branch=branch,
+                    merged_by=merged_by,
+                )
+                self._respond({"resolved": True, "incident_id": record.context.incident_id if record else None}, 200)
+                return
+            self._respond({"ignored": True}, 202)
+            return
+
         repository = payload.get("repository", {}).get("full_name")
         issue = payload.get("issue", {})
         label = payload.get("label", {}).get("name")

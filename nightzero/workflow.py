@@ -219,6 +219,46 @@ class NightZeroWorkflow:
         self.artifact_store.save(record)
         return record
 
+    def handle_pull_request_merged(
+        self, repository: str, pr_number: int, pr_url: str = "", branch: str = "", merged_by: str = ""
+    ) -> IncidentRecord | None:
+        for record in self.artifact_store.list():
+            pr_match = record.approval and record.approval.get("pr_number") == pr_number
+            branch_match = bool(branch and record.approval and record.approval.get("branch") == branch)
+            if pr_match or branch_match:
+                if record.context.status != IncidentStatus.RESOLVED:
+                    record.context.status = IncidentStatus.RESOLVED
+                    actor_text = f" by @{merged_by}" if merged_by else ""
+                    record.approval["merged_at"] = datetime.now(UTC).isoformat()
+                    if merged_by:
+                        record.approval["merged_by"] = merged_by
+                    record.approval["action"] = "PULL_REQUEST_MERGED"
+                    record.audit_events.append(
+                        self._event("github.pull_request.merged", f"Pull request #{pr_number} merged{actor_text}. Incident resolved.")
+                    )
+                    self.artifact_store.save(record)
+                return record
+        return None
+
+    def sync_incident_status(self, record: IncidentRecord, gateway: GitHubGateway) -> IncidentRecord:
+        if record.context.status == IncidentStatus.APPROVED and record.approval and record.approval.get("pr_number"):
+            try:
+                pr_data = gateway.get_pull_request(record.context.repository, record.approval["pr_number"])
+                if pr_data.get("merged") or pr_data.get("merged_at"):
+                    merged_by = (pr_data.get("merged_by") or {}).get("login", "")
+                    record.context.status = IncidentStatus.RESOLVED
+                    record.approval["merged_at"] = pr_data.get("merged_at") or datetime.now(UTC).isoformat()
+                    if merged_by:
+                        record.approval["merged_by"] = merged_by
+                    record.approval["action"] = "PULL_REQUEST_MERGED"
+                    record.audit_events.append(
+                        self._event("github.pull_request.merged", f"Pull request #{record.approval['pr_number']} verified as merged on GitHub. Incident resolved.")
+                    )
+                    self.artifact_store.save(record)
+            except Exception:
+                pass
+        return record
+
     @staticmethod
     def _branch_name(incident_id: str) -> str:
         sanitized = re.sub(r"[^a-z0-9-]+", "-", incident_id.lower()).strip("-")
