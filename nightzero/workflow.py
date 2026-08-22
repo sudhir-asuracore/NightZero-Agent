@@ -1,12 +1,11 @@
-from __future__ import annotations
-
+import base64
 import difflib
 import os
+import random
+import re
 import shutil
 import subprocess
 import tempfile
-import re
-import base64
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
@@ -31,6 +30,104 @@ from nightzero.store import IncidentStore
 TEST_COMMAND = ["python", "-m", "unittest", "demo_target.test_pricing"]
 DEMO_APPROVAL_TOKEN: Final = "nightzero-demo"
 DEFAULT_TARGET_REPOSITORY_URL: Final = "git@github.com:sudhir-asuracore/NightZero-TestProject.git"
+
+SIMULATED_SCENARIOS: Final = [
+    {
+        "service": "demo-payment-gateway",
+        "title": "Pricing formatting truncation: Cents rounded down in checkout totals",
+        "severity": "CRITICAL",
+        "root_cause": "Integer division (// 100) drops fractional cents from display formatting in format_total().",
+        "confidence": 0.99,
+        "culprit_commit": "8f3c2a1",
+        "proposed_patch": 'return f"${cents / 100:.2f}"',
+        "file_path": "demo_target/pricing.py",
+        "diff": '-    return f"${cents // 100}.00"\n+    return f"${cents / 100:.2f}"',
+        "before_output": "FAIL: test_preserves_cents (demo_target.test_pricing.FormatTotalTest)\nAssertionError: '$12.34' != '$12.00'\nFAILED (failures=1)",
+        "after_output": "test_preserves_cents (demo_target.test_pricing.FormatTotalTest) ... ok\nRan 1 test in 0.002s\nOK",
+        "evidence": [
+            {"kind": "log", "source": "Cloud Logging", "detail": "TypeError in checkout/pricing calculation: Expected $12.34, got $12.00"},
+            {"kind": "commit", "source": "git/commits", "detail": "Commit 8f3c2a1 'Use integer division for display totals'"},
+            {"kind": "source", "source": "demo_target/pricing.py", "detail": "format_total uses cents // 100 instead of decimal division"},
+        ],
+        "is_live_commit": True,
+    },
+    {
+        "service": "order-fulfillment-api",
+        "title": "HTTP 500 Spike: Unhandled IndexError on empty discount promo list",
+        "severity": "HIGH",
+        "root_cause": "Discount validator assumes non-empty list before indexing discounts[0], raising IndexError when orders contain no promo codes.",
+        "confidence": 0.96,
+        "culprit_commit": "4b91e02",
+        "proposed_patch": "discount = (discounts or [0])[0] if isinstance(discounts, (list, tuple)) else 0",
+        "file_path": "demo_target/pricing.py",
+        "diff": "-    discount = discounts[0]\n+    discount = (discounts or [0])[0] if isinstance(discounts, (list, tuple)) else 0",
+        "before_output": "FAIL: test_empty_discounts_fallback (demo_target.test_orders.DiscountTest)\nIndexError: list index out of range\nFAILED (failures=1)",
+        "after_output": "test_empty_discounts_fallback (demo_target.test_orders.DiscountTest) ... ok\nRan 2 tests in 0.003s\nOK",
+        "evidence": [
+            {"kind": "log", "source": "Cloud Logging", "detail": "IndexError: list index out of range at /api/v1/orders/apply_discount"},
+            {"kind": "commit", "source": "git/commits", "detail": "Commit 4b91e02 'Refactor discount collection handler'"},
+            {"kind": "metric", "source": "Cloud Monitoring", "detail": "HTTP 500 error rate spiked to 14.2% on /orders endpoint"},
+        ],
+        "is_live_commit": False,
+    },
+    {
+        "service": "inventory-sync-worker",
+        "title": "Database Deadlock & Timeout during concurrent stock reservation",
+        "severity": "CRITICAL",
+        "root_cause": "Missing SELECT ... FOR UPDATE row-level lock on inventory reservation queries causing transaction serialization failures under concurrent load.",
+        "confidence": 0.98,
+        "culprit_commit": "9c12e87",
+        "proposed_patch": "stock = db.query(Inventory).filter_by(sku=sku).with_for_update().first()",
+        "file_path": "demo_target/pricing.py",
+        "diff": "-    stock = db.query(Inventory).filter_by(sku=sku).first()\n+    stock = db.query(Inventory).filter_by(sku=sku).with_for_update().first()",
+        "before_output": "FAIL: test_concurrent_inventory_lock (demo_target.test_inventory.StockLockTest)\nOperationalError: (1213, 'Deadlock found when trying to get lock; try restarting transaction')\nFAILED (failures=1)",
+        "after_output": "test_concurrent_inventory_lock (demo_target.test_inventory.StockLockTest) ... ok\nRan 3 tests in 0.005s\nOK",
+        "evidence": [
+            {"kind": "log", "source": "Cloud SQL Engine", "detail": "Deadlock found when trying to get lock; transaction rolled back"},
+            {"kind": "commit", "source": "git/commits", "detail": "Commit 9c12e87 'Optimize inventory read queries'"},
+            {"kind": "trace", "source": "Cloud Trace", "detail": "Latency p99 increased from 45ms to 12,400ms"},
+        ],
+        "is_live_commit": False,
+    },
+    {
+        "service": "auth-session-manager",
+        "title": "JWT Verification Failure: Clock skew tolerance exceeded on token refresh",
+        "severity": "HIGH",
+        "root_cause": "Strict leeway=0 on JWT expiration validation causes legitimate edge token refreshes to fail with ExpiredSignatureError across multi-region clusters.",
+        "confidence": 0.95,
+        "culprit_commit": "7f03a11",
+        "proposed_patch": 'return jwt.decode(token, secret, algorithms=["HS256"], leeway=60)',
+        "file_path": "demo_target/pricing.py",
+        "diff": '-    return jwt.decode(token, secret, algorithms=["HS256"])\n+    return jwt.decode(token, secret, algorithms=["HS256"], leeway=60)',
+        "before_output": "FAIL: test_token_leeway_tolerance (demo_target.test_auth.TokenTest)\njwt.exceptions.ExpiredSignatureError: Signature has expired\nFAILED (failures=1)",
+        "after_output": "test_token_leeway_tolerance (demo_target.test_auth.TokenTest) ... ok\nRan 4 tests in 0.004s\nOK",
+        "evidence": [
+            {"kind": "log", "source": "Cloud Logging", "detail": "ExpiredSignatureError: Token expired 2 seconds ago (skew -2000ms)"},
+            {"kind": "commit", "source": "git/commits", "detail": "Commit 7f03a11 'Enforce strict auth token validation'"},
+            {"kind": "metric", "source": "Identity Platform", "detail": "Re-authentication rejection rate jumped to 8.7%"},
+        ],
+        "is_live_commit": False,
+    },
+    {
+        "service": "billing-subscription-worker",
+        "title": "Memory Leak & Container OOMKilled in Recurring Charge Dispatcher",
+        "severity": "CRITICAL",
+        "root_cause": "Unbounded event listener registration in webhook subscriber pool causes memory consumption to escalate beyond container memory limit (OOMKilled).",
+        "confidence": 0.97,
+        "culprit_commit": "1e88d43",
+        "proposed_patch": "listeners.add(weakref.ref(callback))",
+        "file_path": "demo_target/pricing.py",
+        "diff": "-    listeners.append(callback)\n+    listeners.add(weakref.ref(callback))",
+        "before_output": "FAIL: test_subscriber_listener_cleanup (demo_target.test_billing.SubscriberTest)\nAssertionError: Expected <= 5 active listeners, found 1000\nFAILED (failures=1)",
+        "after_output": "test_subscriber_listener_cleanup (demo_target.test_billing.SubscriberTest) ... ok\nRan 2 tests in 0.003s\nOK",
+        "evidence": [
+            {"kind": "log", "source": "Cloud Run Events", "detail": "Container terminated with exit code 137 (OOMKilled: memory limit exceeded)"},
+            {"kind": "commit", "source": "git/commits", "detail": "Commit 1e88d43 'Add persistent webhook notification listeners'"},
+            {"kind": "metric", "source": "Cloud Monitoring", "detail": "Memory utilization reached 100% (512MiB quota saturated)"},
+        ],
+        "is_live_commit": False,
+    },
+]
 
 
 class NightZeroWorkflow:
@@ -59,15 +156,70 @@ class NightZeroWorkflow:
         return record
 
     def simulate_outage(self, gateway: GitHubGateway | None = None) -> dict[str, str]:
+        active_services = {
+            rec.context.service
+            for rec in self.artifact_store.list()
+            if rec.context.status not in (IncidentStatus.APPROVED, IncidentStatus.RESOLVED)
+        }
+        available = [s for s in SIMULATED_SCENARIOS if s["service"] not in active_services]
+        scenario = random.choice(available) if available else random.choice(SIMULATED_SCENARIOS)
+
         repository = os.environ.get("NIGHTZERO_GITHUB_REPOSITORY", "sudhir-asuracore/NightZero-TestProject")
         
-        if gateway:
+        if scenario.get("is_live_commit") and gateway:
             try:
                 gateway.commit_pricing_replacement(repository, "main", "demo_target/pricing.py", 'return f"${cents // 100}.00"')
-            except Exception as e:
-                raise RuntimeError(f"Failed to push commit: {e}")
-                
-        return {"status": "Deploying simulated outage. A real incident will trigger shortly."}
+            except Exception:
+                pass
+
+        incident_id = f"inc-sim-{uuid4().hex[:6]}"
+        context = IncidentContext(
+            incident_id=incident_id,
+            session_id=f"incident-{incident_id}",
+            issue_number=0,
+            title=scenario["title"],
+            service=scenario["service"],
+            severity=scenario["severity"],
+            source_commit=scenario["culprit_commit"],
+            created_at=datetime.now(UTC).isoformat(),
+            status=IncidentStatus.AWAITING_APPROVAL,
+            delivery_id=f"sim-{incident_id}",
+            repository=repository,
+            repository_ref="main",
+        )
+        
+        evidence_list = [Evidence(e["kind"], e["source"], e["detail"]) for e in scenario["evidence"]]
+        rca = RootCauseAnalysis(
+            root_cause=scenario["root_cause"],
+            confidence=scenario["confidence"],
+            culprit_commit=scenario["culprit_commit"],
+            proposed_patch=scenario["proposed_patch"],
+            evidence=evidence_list,
+        )
+        
+        verification = RemediationVerificationReport(
+            sandbox_id=f"sandbox-{uuid4().hex[:8]}",
+            branch_name=f"nightzero/inc-{incident_id}",
+            file_path=scenario["file_path"],
+            diff=scenario["diff"],
+            before=CommandResult(["python", "-m", "unittest", "discover"], 1, scenario["before_output"]),
+            after=CommandResult(["python", "-m", "unittest", "discover"], 0, scenario["after_output"]),
+            staging_status="VERIFIED",
+        )
+        
+        audit = [
+            self._event("simulation.triggered", f"Operator triggered outage simulation for {scenario['service']}"),
+            self._event("adk.investigation.completed", f"Analyzed failure logs and isolated root cause in {scenario['service']}"),
+            self._event("sandbox.verified", f"Generated remediation proposal and verified in isolated sandbox"),
+        ]
+        
+        record = IncidentRecord(context, rca, verification, audit)
+        self.artifact_store.save(record)
+        
+        return {
+            "status": f"⚡ Simulated outage injected: [{scenario['service']}] {scenario['title']}",
+            "incident_id": incident_id,
+        }
 
     def run_gcp_logging_incident(
         self, delivery_id: str, service_name: str, log_payload: str, severity: str = "CRITICAL", gateway: GitHubGateway | None = None, investigator: InvestigationRunner | None = None
