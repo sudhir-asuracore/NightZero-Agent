@@ -13,6 +13,8 @@ class IncidentStore(Protocol):
     def get_by_delivery_id(self, delivery_id: str) -> IncidentRecord | None: ...
     def claim_delivery_id(self, delivery_id: str, incident_id: str) -> str | None: ...
     def clear_all(self) -> None: ...
+    def get_setting(self, key: str, default: object = None) -> object: ...
+    def set_setting(self, key: str, value: object) -> None: ...
 
 
 class ArtifactStore:
@@ -50,6 +52,26 @@ class ArtifactStore:
     def clear_all(self) -> None:
         for path in self.directory.glob("inc-*.json"):
             path.unlink()
+
+    def get_setting(self, key: str, default: object = None) -> object:
+        settings_file = self.directory / "settings.json"
+        if not settings_file.is_file():
+            return default
+        try:
+            return json.loads(settings_file.read_text(encoding="utf-8")).get(key, default)
+        except Exception:
+            return default
+
+    def set_setting(self, key: str, value: object) -> None:
+        settings_file = self.directory / "settings.json"
+        data = {}
+        if settings_file.is_file():
+            try:
+                data = json.loads(settings_file.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+        data[key] = value
+        settings_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 class FirestoreArtifactStore:
@@ -105,6 +127,21 @@ class FirestoreArtifactStore:
             snapshot.reference.delete()
         for snapshot in self.deliveries.stream():
             snapshot.reference.delete()
+
+    def get_setting(self, key: str, default: object = None) -> object:
+        try:
+            doc = self.client.collection("settings").document("config").get()
+            if doc.exists:
+                return doc.to_dict().get(key, default)
+        except Exception:
+            pass
+        return default
+
+    def set_setting(self, key: str, value: object) -> None:
+        try:
+            self.client.collection("settings").document("config").set({key: value}, merge=True)
+        except Exception:
+            pass
 
     @staticmethod
     def _delivery_document_id(delivery_id: str) -> str:

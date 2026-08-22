@@ -142,6 +142,17 @@ class NightZeroWorkflow:
             "NIGHTZERO_TARGET_REPOSITORY_URL", DEFAULT_TARGET_REPOSITORY_URL
         )
 
+    @property
+    def deterministic_mode(self) -> bool:
+        setting = self.artifact_store.get_setting("deterministic_mode", None)
+        if setting is not None:
+            return bool(setting)
+        return os.environ.get("NIGHTZERO_DETERMINISTIC_MODE", "false").lower() in ("true", "1", "yes")
+
+    def set_deterministic_mode(self, enabled: bool) -> bool:
+        self.artifact_store.set_setting("deterministic_mode", enabled)
+        return enabled
+
     def run_seeded_issue(self) -> IncidentRecord:
         context = IncidentContext.from_issue(
             issue_number=142,
@@ -156,6 +167,59 @@ class NightZeroWorkflow:
         return record
 
     def simulate_outage(self, gateway: GitHubGateway | None = None) -> dict[str, str]:
+        repository = os.environ.get("NIGHTZERO_GITHUB_REPOSITORY", "sudhir-asuracore/NightZero-TestProject")
+        
+        # When deterministic mode is OFF and gateway is available, run live Gemini investigation
+        if not self.deterministic_mode and gateway:
+            try:
+                gateway.commit_pricing_replacement(repository, "main", "demo_target/pricing.py", 'return f"${cents // 100}.00"')
+            except Exception:
+                pass
+            
+            incident_id = f"inc-gemini-{uuid4().hex[:6]}"
+            context = IncidentContext(
+                incident_id=incident_id,
+                session_id=f"incident-{incident_id}",
+                issue_number=0,
+                title="Gemini AI RCA: TypeError in checkout/pricing calculation",
+                service="demo-payment-gateway",
+                severity="CRITICAL",
+                source_commit="live-commit",
+                created_at=datetime.now(UTC).isoformat(),
+                status=IncidentStatus.INGESTING,
+                delivery_id=f"sim-{incident_id}",
+                repository=repository,
+                repository_ref="main",
+            )
+            audit = [
+                self._event("simulation.triggered", "Operator triggered autonomous Gemini AI outage simulation"),
+                self._event("gemini.investigation.started", "Invoking Gemini 2.5 Flash for autonomous triage and RCA"),
+            ]
+            try:
+                evidence = gateway.get_repository_evidence(repository, "main")
+                context.source_commit = evidence.commit_sha
+            except Exception:
+                evidence = RepositoryEvidence("live-sha", "Fixes pricing display", "demo_target/pricing.py", 'return f"${cents // 100}.00"')
+                
+            from nightzero.investigation import GeminiInvestigationRunner
+            gemini_runner = GeminiInvestigationRunner()
+            rca = self._investigate_live(
+                context,
+                "TypeError in checkout/pricing calculation: Expected $12.34, got $12.00 at demo_target/pricing.py:2 in format_total",
+                evidence,
+                audit,
+                gemini_runner,
+            )
+            verification = self._verify_in_sandbox(rca, audit)
+            context.status = IncidentStatus.AWAITING_APPROVAL
+            record = IncidentRecord(context, rca, verification, audit)
+            self.artifact_store.save(record)
+            return {
+                "status": "⚡ Autonomous Gemini AI investigation complete! Remediated & verified in sandbox.",
+                "incident_id": incident_id,
+            }
+
+        # Deterministic scenario mode
         active_services = {
             rec.context.service
             for rec in self.artifact_store.list()
@@ -164,8 +228,6 @@ class NightZeroWorkflow:
         available = [s for s in SIMULATED_SCENARIOS if s["service"] not in active_services]
         scenario = random.choice(available) if available else random.choice(SIMULATED_SCENARIOS)
 
-        repository = os.environ.get("NIGHTZERO_GITHUB_REPOSITORY", "sudhir-asuracore/NightZero-TestProject")
-        
         if scenario.get("is_live_commit") and gateway:
             try:
                 gateway.commit_pricing_replacement(repository, "main", "demo_target/pricing.py", 'return f"${cents // 100}.00"')
@@ -254,8 +316,20 @@ class NightZeroWorkflow:
             self._event("gcp.logging.webhook", f"Received Cloud Logging alert sink event {delivery_id}"),
             self._event("gcp.logging.stacktrace", f"Extracted log payload: {log_payload[:150]}..."),
         ]
-        rca = self._investigate(context, audit)
-        verification = self._verify_in_sandbox(rca, audit)
+        if not self.deterministic_mode and gateway:
+            try:
+                evidence = gateway.get_repository_evidence(context.repository, context.repository_ref)
+                context.source_commit = evidence.commit_sha
+                from nightzero.investigation import GeminiInvestigationRunner
+                runner = investigator or GeminiInvestigationRunner()
+                rca = self._investigate_live(context, log_payload, evidence, audit, runner)
+                verification = self._verify_in_sandbox(rca, audit)
+            except Exception:
+                rca = self._investigate(context, audit)
+                verification = self._verify_in_sandbox(rca, audit)
+        else:
+            rca = self._investigate(context, audit)
+            verification = self._verify_in_sandbox(rca, audit)
         context.status = IncidentStatus.AWAITING_APPROVAL
         record = IncidentRecord(context, rca, verification, audit)
         self.artifact_store.save(record)

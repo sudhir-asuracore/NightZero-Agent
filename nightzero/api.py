@@ -48,9 +48,9 @@ class AgentApiHandler(BaseHTTPRequestHandler):
             total = len(all_records)
             paginated = [self._summary(record) for record in all_records[offset:offset+limit]]
             
-            # Return as a dictionary with metadata so frontend can do proper pagination,
-            # but if it breaks the frontend, frontend will be updated next.
             self._respond({"incidents": paginated, "total": total})
+        elif path == "/api/v1/settings":
+            self._respond({"deterministic_mode": self.server.workflow.deterministic_mode})
         elif path.startswith("/api/v1/incidents/"):
             incident_id = path.rsplit("/", 1)[1]
             record = self.server.store.get(incident_id)
@@ -69,6 +69,16 @@ class AgentApiHandler(BaseHTTPRequestHandler):
             self._respond({"error": "Not found"}, 404)
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.path == "/api/v1/settings":
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")) or 0)
+            try:
+                payload = json.loads(body)
+            except json.JSONDecodeError:
+                payload = {}
+            enabled = bool(payload.get("deterministic_mode", False))
+            self.server.workflow.set_deterministic_mode(enabled)
+            self._respond({"deterministic_mode": enabled})
+            return
         if self.path == "/api/v1/webhooks/github":
             self._handle_github_webhook()
             return
