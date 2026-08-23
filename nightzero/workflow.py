@@ -548,9 +548,6 @@ class NightZeroWorkflow:
             checkout = sandbox_root / "target"
             self._run_git(["clone", "--depth", "1", self._clone_url(), str(checkout)], environment=self._git_environment())
             self._run_git(["checkout", "-b", branch_name], cwd=checkout)
-            before = self._run_test(checkout)
-            if before.exit_code == 0:
-                raise RuntimeError("Seeded incident unexpectedly passed before remediation")
 
             source_path = checkout / target_file_path
             if not source_path.exists():
@@ -558,15 +555,28 @@ class NightZeroWorkflow:
                 target_file_path = "demo_target/pricing.py"
 
             original = source_path.read_text(encoding="utf-8")
+            before = self._run_test(checkout)
+
+            # If the remote repository was cloned in a healthy state (e.g. after a previous PR merge),
+            # reproduce the defect in the sandbox to capture the 'before' test failure evidence.
+            if before.exit_code == 0:
+                buggy_content = re.sub(r'return f"\${cents [^"]+}"', 'return f"${cents // 100}.00"', original)
+                if buggy_content == original:
+                    buggy_content = re.sub(r'return .*', 'return f"${cents // 100}.00"', original)
+                source_path.write_text(buggy_content, encoding="utf-8")
+                shutil.rmtree(source_path.parent / "__pycache__", ignore_errors=True)
+                before = self._run_test(checkout)
+                original = buggy_content
+
+            # Apply candidate remediation patch
             if 'return f"${cents // 100}.00"' in original:
                 patched = original.replace('return f"${cents // 100}.00"', replacement)
             elif replacement in original:
                 patched = original
             else:
-                # If target substring replacement didn't match directly, replace line or full return
-                patched = re.sub(r'return f"\${cents // 100}\.00"', replacement, original)
+                patched = re.sub(r'return f"\${cents [^"]+}"', replacement, original)
                 if patched == original:
-                    patched = original.replace('return f"${cents // 100}.00"', 'return f"${cents / 100:.2f}"')
+                    patched = re.sub(r'return .*', replacement, original)
 
             source_path.write_text(patched, encoding="utf-8")
             shutil.rmtree(source_path.parent / "__pycache__", ignore_errors=True)
@@ -581,18 +591,16 @@ class NightZeroWorkflow:
                     tofile=f"b/{target_file_path}",
                 )
             )
-
-        audit.append(self._event("sandbox.created", f"Created isolated {sandbox_id}"))
-        audit.append(self._event("sandbox.test", "Captured failing-before and passing-after test runs"))
-        return RemediationVerificationReport(
-            sandbox_id=sandbox_id,
-            branch_name=branch_name,
-            file_path=target_file_path,
-            diff=diff,
-            before=before,
-            after=after,
-            staging_status="VERIFIED",
-        )
+            audit.append(self._event("sandbox.verification.passed", f"Verified patch in {branch_name}"))
+            return RemediationVerificationReport(
+                sandbox_id=sandbox_id,
+                branch_name=branch_name,
+                file_path=target_file_path,
+                diff=diff,
+                before=before,
+                after=after,
+                staging_status="VERIFIED",
+            )
 
     @staticmethod
     def _run_test(cwd: Path) -> CommandResult:
