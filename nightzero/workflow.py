@@ -392,25 +392,25 @@ class NightZeroWorkflow:
         approval.update({"actor": actor, "approved_at": datetime.now(UTC).isoformat(), "action": "PULL_REQUEST_PENDING", "branch": branch})
         record.approval = approval
         try:
-            # 1. Resolve source_commit if "unknown" or empty
-            source_commit = record.context.source_commit
-            if not source_commit or source_commit == "unknown":
-                try:
-                    repo_info = gateway.get_repository(record.context.repository)
-                    default_ref = repo_info.default_branch
-                except Exception:
-                    default_ref = "main"
-                try:
-                    evidence = gateway.get_repository_evidence(record.context.repository, default_ref)
-                    source_commit = evidence.commit_sha
-                except Exception:
-                    source_commit = ""
-                record.context.source_commit = source_commit
-                if not record.context.repository_ref:
-                    record.context.repository_ref = default_ref
+            # 1. Always resolve a valid remote commit SHA for branch creation
+            try:
+                repo_info = gateway.get_repository(record.context.repository)
+                default_ref = repo_info.default_branch or "main"
+            except Exception:
+                default_ref = record.context.repository_ref or "main"
+
+            try:
+                evidence = gateway.get_repository_evidence(record.context.repository, default_ref)
+                remote_commit = evidence.commit_sha
+            except Exception:
+                remote_commit = ""
+
+            source_commit = remote_commit or record.context.source_commit
+            if not record.context.repository_ref:
+                record.context.repository_ref = default_ref
 
             if not approval.get("branch_created"):
-                gateway.create_branch(record.context.repository, branch, record.context.source_commit)
+                gateway.create_branch(record.context.repository, branch, source_commit)
                 approval["branch_created"] = True
                 self.artifact_store.save(record)
             if not approval.get("commit_sha"):

@@ -90,7 +90,16 @@ class GitHubApiGateway(GitHubGateway):
         except RuntimeError as error:
             if "HTTP Error 404" not in str(error):
                 raise
-        self._request("POST", f"/repos/{repository}/git/refs", {"ref": f"refs/heads/{branch}", "sha": source_commit})
+        try:
+            self._request("POST", f"/repos/{repository}/git/refs", {"ref": f"refs/heads/{branch}", "sha": source_commit})
+        except RuntimeError as error:
+            if "HTTP Error 422" in str(error):
+                commits = self._get(f"/repos/{repository}/commits?per_page=1")
+                if commits and isinstance(commits, list) and "sha" in commits[0]:
+                    head_sha = commits[0]["sha"]
+                    self._request("POST", f"/repos/{repository}/git/refs", {"ref": f"refs/heads/{branch}", "sha": head_sha})
+                    return
+            raise
 
     def commit_pricing_replacement(self, repository: str, branch: str, file_path: str, replacement: str) -> str:
         source = self._get(f"/repos/{repository}/contents/{file_path}?ref={branch}")
