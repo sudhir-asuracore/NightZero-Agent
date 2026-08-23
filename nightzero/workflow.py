@@ -171,11 +171,6 @@ class NightZeroWorkflow:
         
         # When deterministic mode is OFF and gateway is available, run live Gemini investigation
         if not self.deterministic_mode and gateway:
-            try:
-                gateway.commit_pricing_replacement(repository, "main", "demo_target/pricing.py", 'return f"${cents // 100}.00"')
-            except Exception:
-                pass
-            
             incident_id = f"inc-gemini-{uuid4().hex[:6]}"
             context = IncidentContext(
                 incident_id=incident_id,
@@ -193,33 +188,93 @@ class NightZeroWorkflow:
             )
             audit = [
                 self._event("simulation.triggered", "Operator triggered autonomous Gemini AI outage simulation"),
-                self._event("gemini.investigation.started", "Invoking Gemini 2.5 Flash for autonomous triage and RCA"),
+                self._event("gcp.logging.stacktrace", "Captured checkout TypeError: Expected $12.34, got $12.00 in demo_target/pricing.py"),
             ]
-            try:
-                evidence = gateway.get_repository_evidence(repository, "main")
-                context.source_commit = evidence.commit_sha
-            except Exception:
-                evidence = RepositoryEvidence("live-sha", "Fixes pricing display", "demo_target/pricing.py", 'return f"${cents // 100}.00"')
-                
-            from nightzero.investigation import GeminiInvestigationRunner
-            gemini_runner = GeminiInvestigationRunner()
-            rca = self._investigate_live(
-                context,
-                "TypeError in checkout/pricing calculation: Expected $12.34, got $12.00 at demo_target/pricing.py:2 in format_total",
-                evidence,
-                audit,
-                gemini_runner,
+            empty_rca = RootCauseAnalysis(
+                root_cause="Live Gemini 2.5 Flash investigation in progress...",
+                confidence=0.0,
+                culprit_commit="pending",
+                proposed_patch="Synthesizing patch...",
+                evidence=[Evidence("log", "Cloud Logging", "Captured live stack trace in checkout pricing calculation")],
             )
-            verification = self._verify_in_sandbox(rca, audit)
-            context.status = IncidentStatus.AWAITING_APPROVAL
-            record = IncidentRecord(context, rca, verification, audit)
+            empty_verif = RemediationVerificationReport(
+                sandbox_id=f"sandbox-{uuid4().hex[:8]}",
+                branch_name=f"nightzero/inc-{incident_id}",
+                file_path="demo_target/pricing.py",
+                diff="Generating sandbox diff...",
+                before=CommandResult(["python", "-m", "unittest", "discover"], 1, "Executing pre-patch baseline tests..."),
+                after=CommandResult(["python", "-m", "unittest", "discover"], 1, "Awaiting candidate patch..."),
+                staging_status="IN_PROGRESS",
+            )
+            record = IncidentRecord(context, empty_rca, empty_verif, audit)
             self.artifact_store.save(record)
+
+            def _async_gemini_investigation():
+                import time
+                try:
+                    # 1. Commit bug to GitHub
+                    try:
+                        gateway.commit_pricing_replacement(repository, "main", "demo_target/pricing.py", 'return f"${cents // 100}.00"')
+                    except Exception:
+                        pass
+                    
+                    time.sleep(1.5)
+                    
+                    # 2. Stage: RCA with Gemini 2.5 Flash
+                    record.context.status = IncidentStatus.RCA
+                    record.audit_events.append(self._event("gemini.investigation.started", "Invoking Gemini 2.5 Flash for autonomous triage and RCA"))
+                    self.artifact_store.save(record)
+
+                    try:
+                        evidence = gateway.get_repository_evidence(repository, "main")
+                        record.context.source_commit = evidence.commit_sha
+                    except Exception:
+                        evidence = RepositoryEvidence("live-sha", "Fixes pricing display", "demo_target/pricing.py", 'return f"${cents // 100}.00"')
+                        
+                    from nightzero.investigation import GeminiInvestigationRunner
+                    gemini_runner = GeminiInvestigationRunner()
+                    rca = self._investigate_live(
+                        record.context,
+                        "TypeError in checkout/pricing calculation: Expected $12.34, got $12.00 at demo_target/pricing.py:2 in format_total",
+                        evidence,
+                        record.audit_events,
+                        gemini_runner,
+                    )
+                    record.rca = rca
+                    self.artifact_store.save(record)
+                    
+                    time.sleep(1.5)
+
+                    # 3. Stage: SANDBOX_TESTING
+                    record.context.status = IncidentStatus.SANDBOX_TESTING
+                    record.audit_events.append(self._event("sandbox.testing.started", "Executing isolated subprocess verification of Gemini candidate patch"))
+                    self.artifact_store.save(record)
+
+                    verification = self._verify_in_sandbox(rca, record.audit_events)
+                    record.verification = verification
+                    self.artifact_store.save(record)
+
+                    time.sleep(1.2)
+
+                    # 4. Stage: AWAITING_APPROVAL
+                    record.context.status = IncidentStatus.AWAITING_APPROVAL
+                    record.audit_events.append(self._event("human_gate.ready", "Remediation verified in sandbox. Awaiting human reviewer authorization."))
+                    self.artifact_store.save(record)
+                except Exception as err:
+                    record.context.status = IncidentStatus.PR_CREATION_FAILED
+                    record.approval = {"failure": str(err)}
+                    record.audit_events.append(self._event("investigation.error", str(err)))
+                    self.artifact_store.save(record)
+
+            import threading
+            threading.Thread(target=_async_gemini_investigation, daemon=True).start()
+
             return {
-                "status": "⚡ Autonomous Gemini AI investigation complete! Remediated & verified in sandbox.",
+                "status": "⚡ Autonomous Gemini AI investigation initiated! Live RCA & sandbox testing running...",
                 "incident_id": incident_id,
             }
 
-        # Deterministic scenario mode
+        # Deterministic scenario mode with progressive stages
         active_services = {
             rec.context.service
             for rec in self.artifact_store.list()
@@ -227,12 +282,6 @@ class NightZeroWorkflow:
         }
         available = [s for s in SIMULATED_SCENARIOS if s["service"] not in active_services]
         scenario = random.choice(available) if available else random.choice(SIMULATED_SCENARIOS)
-
-        if scenario.get("is_live_commit") and gateway:
-            try:
-                gateway.commit_pricing_replacement(repository, "main", "demo_target/pricing.py", 'return f"${cents // 100}.00"')
-            except Exception:
-                pass
 
         incident_id = f"inc-sim-{uuid4().hex[:6]}"
         context = IncidentContext(
@@ -244,7 +293,7 @@ class NightZeroWorkflow:
             severity=scenario["severity"],
             source_commit=scenario["culprit_commit"],
             created_at=datetime.now(UTC).isoformat(),
-            status=IncidentStatus.AWAITING_APPROVAL,
+            status=IncidentStatus.INGESTING,
             delivery_id=f"sim-{incident_id}",
             repository=repository,
             repository_ref="main",
@@ -271,12 +320,32 @@ class NightZeroWorkflow:
         
         audit = [
             self._event("simulation.triggered", f"Operator triggered outage simulation for {scenario['service']}"),
-            self._event("adk.investigation.completed", f"Analyzed failure logs and isolated root cause in {scenario['service']}"),
-            self._event("sandbox.verified", f"Generated remediation proposal and verified in isolated sandbox"),
         ]
         
         record = IncidentRecord(context, rca, verification, audit)
         self.artifact_store.save(record)
+
+        def _async_deterministic_stages():
+            import time
+            if scenario.get("is_live_commit") and gateway:
+                try:
+                    gateway.commit_pricing_replacement(repository, "main", "demo_target/pricing.py", 'return f"${cents // 100}.00"')
+                except Exception:
+                    pass
+            time.sleep(1.0)
+            record.context.status = IncidentStatus.RCA
+            record.audit_events.append(self._event("adk.investigation.completed", f"Analyzed failure logs and isolated root cause in {scenario['service']}"))
+            self.artifact_store.save(record)
+            time.sleep(1.0)
+            record.context.status = IncidentStatus.SANDBOX_TESTING
+            record.audit_events.append(self._event("sandbox.verified", "Generated remediation proposal and verified in isolated sandbox"))
+            self.artifact_store.save(record)
+            time.sleep(0.8)
+            record.context.status = IncidentStatus.AWAITING_APPROVAL
+            self.artifact_store.save(record)
+
+        import threading
+        threading.Thread(target=_async_deterministic_stages, daemon=True).start()
         
         return {
             "status": f"⚡ Simulated outage injected: [{scenario['service']}] {scenario['title']}",
