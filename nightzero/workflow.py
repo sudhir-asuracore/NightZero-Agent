@@ -129,6 +129,30 @@ SIMULATED_SCENARIOS: Final = [
     },
 ]
 
+AVAILABLE_GEMINI_MODELS = [
+    {
+        "id": "gemini-2.5-flash",
+        "name": "Gemini 2.5 Flash",
+        "badge": "RECOMMENDED / FAST",
+        "description": "Ultra-fast, high-efficiency model for real-time autonomous SRE triage and rapid patch synthesis.",
+        "latency": "~1.2s",
+    },
+    {
+        "id": "gemini-2.5-pro",
+        "name": "Gemini 2.5 Pro",
+        "badge": "DEEP REASONING",
+        "description": "Advanced deep reasoning model for complex multi-service architectural analysis and subtle root cause deduction.",
+        "latency": "~3.5s",
+    },
+    {
+        "id": "gemini-2.5-flash-lite",
+        "name": "Gemini 2.5 Flash-Lite",
+        "badge": "ULTRA LIGHTWEIGHT",
+        "description": "Ultra-lightweight, high-throughput model optimized for ultra-low latency triage.",
+        "latency": "~0.8s",
+    },
+]
+
 
 class NightZeroWorkflow:
     """A bounded, deterministic implementation of the four-agent MVP path."""
@@ -153,6 +177,19 @@ class NightZeroWorkflow:
         self.artifact_store.set_setting("deterministic_mode", enabled)
         return enabled
 
+    @property
+    def gemini_model(self) -> str:
+        setting = self.artifact_store.get_setting("gemini_model", None)
+        if setting:
+            return str(setting)
+        return os.environ.get("NIGHTZERO_GEMINI_MODEL", "gemini-2.5-flash")
+
+    def set_gemini_model(self, model: str) -> str:
+        valid_ids = {m["id"] for m in AVAILABLE_GEMINI_MODELS}
+        chosen = model if model in valid_ids else "gemini-2.5-flash"
+        self.artifact_store.set_setting("gemini_model", chosen)
+        return chosen
+
     def run_seeded_issue(self) -> IncidentRecord:
         context = IncidentContext.from_issue(
             issue_number=142,
@@ -171,12 +208,13 @@ class NightZeroWorkflow:
         
         # When deterministic mode is OFF and gateway is available, run live Gemini investigation
         if not self.deterministic_mode and gateway:
+            active_model = self.gemini_model
             incident_id = f"inc-gemini-{uuid4().hex[:6]}"
             context = IncidentContext(
                 incident_id=incident_id,
                 session_id=f"incident-{incident_id}",
                 issue_number=0,
-                title="Gemini AI RCA: TypeError in checkout/pricing calculation",
+                title=f"Gemini AI ({active_model}) RCA: TypeError in checkout/pricing calculation",
                 service="demo-payment-gateway",
                 severity="CRITICAL",
                 source_commit="live-commit",
@@ -187,15 +225,15 @@ class NightZeroWorkflow:
                 repository_ref="main",
             )
             audit = [
-                self._event("simulation.triggered", "Operator triggered autonomous Gemini AI outage simulation"),
+                self._event("simulation.triggered", f"Operator triggered autonomous outage simulation with {active_model}"),
                 self._event("gcp.logging.stacktrace", "Captured checkout TypeError: Expected $12.34, got $12.00 in demo_target/pricing.py"),
             ]
             empty_rca = RootCauseAnalysis(
-                root_cause="Live Gemini 2.5 Flash investigation in progress...",
+                root_cause=f"Live {active_model} investigation in progress...",
                 confidence=0.0,
                 culprit_commit="pending",
                 proposed_patch="Synthesizing patch...",
-                evidence=[Evidence("log", "Cloud Logging", "Captured live stack trace in checkout pricing calculation")],
+                evidence=[Evidence("log", "Cloud Logging", f"Captured live stack trace analyzed by {active_model}")],
             )
             empty_verif = RemediationVerificationReport(
                 sandbox_id=f"sandbox-{uuid4().hex[:8]}",
@@ -220,9 +258,9 @@ class NightZeroWorkflow:
                     
                     time.sleep(1.5)
                     
-                    # 2. Stage: RCA with Gemini 2.5 Flash
+                    # 2. Stage: RCA with chosen Gemini Model
                     record.context.status = IncidentStatus.RCA
-                    record.audit_events.append(self._event("gemini.investigation.started", "Invoking Gemini 2.5 Flash for autonomous triage and RCA"))
+                    record.audit_events.append(self._event("gemini.investigation.started", f"Invoking {active_model} for autonomous triage and RCA"))
                     self.artifact_store.save(record)
 
                     try:
@@ -232,7 +270,7 @@ class NightZeroWorkflow:
                         evidence = RepositoryEvidence("live-sha", "Fixes pricing display", "demo_target/pricing.py", 'return f"${cents // 100}.00"')
                         
                     from nightzero.investigation import GeminiInvestigationRunner
-                    gemini_runner = GeminiInvestigationRunner()
+                    gemini_runner = GeminiInvestigationRunner(model=active_model)
                     rca = self._investigate_live(
                         record.context,
                         "TypeError in checkout/pricing calculation: Expected $12.34, got $12.00 at demo_target/pricing.py:2 in format_total",
@@ -390,7 +428,7 @@ class NightZeroWorkflow:
                 evidence = gateway.get_repository_evidence(context.repository, context.repository_ref)
                 context.source_commit = evidence.commit_sha
                 from nightzero.investigation import GeminiInvestigationRunner
-                runner = investigator or GeminiInvestigationRunner()
+                runner = investigator or GeminiInvestigationRunner(model=self.gemini_model)
                 rca = self._investigate_live(context, log_payload, evidence, audit, runner)
                 verification = self._verify_in_sandbox(rca, audit)
             except Exception:

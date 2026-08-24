@@ -50,7 +50,12 @@ class AgentApiHandler(BaseHTTPRequestHandler):
             
             self._respond({"incidents": paginated, "total": total})
         elif path == "/api/v1/settings":
-            self._respond({"deterministic_mode": self.server.workflow.deterministic_mode})
+            from nightzero.workflow import AVAILABLE_GEMINI_MODELS
+            self._respond({
+                "deterministic_mode": self.server.workflow.deterministic_mode,
+                "gemini_model": self.server.workflow.gemini_model,
+                "available_models": AVAILABLE_GEMINI_MODELS,
+            })
         elif path.startswith("/api/v1/incidents/"):
             incident_id = path.rsplit("/", 1)[1]
             record = self.server.store.get(incident_id)
@@ -75,9 +80,18 @@ class AgentApiHandler(BaseHTTPRequestHandler):
                 payload = json.loads(body)
             except json.JSONDecodeError:
                 payload = {}
-            enabled = bool(payload.get("deterministic_mode", False))
-            self.server.workflow.set_deterministic_mode(enabled)
-            self._respond({"deterministic_mode": enabled})
+            if "deterministic_mode" in payload:
+                enabled = bool(payload.get("deterministic_mode", False))
+                self.server.workflow.set_deterministic_mode(enabled)
+            if "gemini_model" in payload:
+                model = str(payload.get("gemini_model", "gemini-2.5-flash"))
+                self.server.workflow.set_gemini_model(model)
+            from nightzero.workflow import AVAILABLE_GEMINI_MODELS
+            self._respond({
+                "deterministic_mode": self.server.workflow.deterministic_mode,
+                "gemini_model": self.server.workflow.gemini_model,
+                "available_models": AVAILABLE_GEMINI_MODELS,
+            })
             return
         if self.path == "/api/v1/webhooks/github":
             self._handle_github_webhook()

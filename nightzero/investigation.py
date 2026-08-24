@@ -14,6 +14,9 @@ class InvestigationRunner(Protocol):
 class GeminiInvestigationRunner:
     """Runs autonomous Gemini AI root cause analysis and dynamic remediation code generation."""
 
+    def __init__(self, model: str = "gemini-2.5-flash") -> None:
+        self.model = model or "gemini-2.5-flash"
+
     def investigate(self, context: IncidentContext, issue_body: str, evidence: RepositoryEvidence) -> InvestigationProposal:
         api_key = os.environ.get("GOOGLE_API_KEY")
         if not api_key:
@@ -55,7 +58,7 @@ Return ONLY a valid JSON object with the following fields:
 }}
 """
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model=self.model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",

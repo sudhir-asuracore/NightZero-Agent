@@ -131,3 +131,15 @@ class NightZeroWorkflowTest(unittest.TestCase):
                 run.return_value.stderr = "https://secret-clone-token@github.com/owner/repository.git"
                 with self.assertRaisesRegex(RuntimeError, r"^Git sandbox setup failed$"):
                     workflow._run_git(["clone", "ignored"], environment=environment)
+
+    def test_gemini_model_setting(self) -> None:
+        root = Path(__file__).parents[1]
+        with tempfile.TemporaryDirectory() as artifacts:
+            store = ArtifactStore(Path(artifacts))
+            workflow = NightZeroWorkflow(root, store, str(root.parent / "NightZero-TestProject"))
+            self.assertEqual("gemini-2.5-flash", workflow.gemini_model)
+            workflow.set_gemini_model("gemini-2.5-pro")
+            self.assertEqual("gemini-2.5-pro", workflow.gemini_model)
+            # Test invalid model resets/defaults to 2.5-flash
+            workflow.set_gemini_model("invalid-model")
+            self.assertEqual("gemini-2.5-flash", workflow.gemini_model)
