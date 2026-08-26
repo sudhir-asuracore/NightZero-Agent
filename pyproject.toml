@@ -6,7 +6,8 @@ requires-python = ">=3.11"
 dependencies = [
   "firebase-admin>=6.5.0",
   "google-adk>=1.0.0",
-  "google-cloud-firestore>=2.16.0",
+  "google-cloud-firestore>=2.20.0",
+  "google-api-core>=2.24.0,<2.35.0",
 ]
 
 [build-system]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -20,6 +21,7 @@ class IncidentStatus(StrEnum):
     APPROVED = "APPROVED"
     PR_CREATION_FAILED = "PR_CREATION_FAILED"
     RESOLVED = "RESOLVED"
+    DEPLOYED = "DEPLOYED"
 
 
 @dataclass
@@ -37,19 +39,24 @@ class IncidentContext:
     repository: str = ""
     repository_ref: str = ""
     delivery_id: str = ""
+    occurrence_count: int = 1
+    last_seen_at: str = ""
+    error_signature: str = ""
 
     @classmethod
     def from_issue(cls, issue_number: int, title: str, **metadata: str) -> "IncidentContext":
         identifier = uuid4().hex[:12]
+        repo = metadata.pop("repository", "") or os.environ.get("NIGHTZERO_GITHUB_REPOSITORY", "") or "default/repo"
         return cls(
             incident_id=f"inc-{identifier}",
             session_id=f"incident-{identifier}",
             issue_number=issue_number,
             title=title,
-            service="demo_target",
-            severity="HIGH",
-            source_commit="8f3c2a1",
+            service=metadata.pop("service", "target-service"),
+            severity=metadata.pop("severity", "HIGH"),
+            source_commit=metadata.pop("source_commit", "latest"),
             created_at=datetime.now(UTC).isoformat(),
+            repository=repo,
             **metadata,
         )
 
@@ -62,12 +69,53 @@ class Evidence:
 
 
 @dataclass
+class TimelineEvent:
+    timestamp: str
+    phase: str  # "PRECURSOR" | "TRIGGER" | "FAILURE" | "DETECTION"
+    event: str
+    source: str
+    details: str = ""
+
+
+@dataclass
+class GitAttribution:
+    author: str
+    commit_sha: str
+    commit_message: str
+    pr_number: int | None = None
+    pr_title: str = ""
+    pr_url: str = ""
+    changed_file: str = ""
+    merged_at: str = ""
+
+
+@dataclass
+class TestGapAnalysis:
+    why_tests_missed: str
+    blindspot_summary: str
+    recommended_test_name: str
+    recommended_test_code: str
+
+
+@dataclass
+class BlastRadius:
+    impacted_endpoints: list[str] = field(default_factory=list)
+    failure_rate: str = ""
+    affected_services: list[str] = field(default_factory=list)
+
+
+@dataclass
 class RootCauseAnalysis:
     root_cause: str
     confidence: float
     culprit_commit: str
     proposed_patch: str
-    evidence: list[Evidence]
+    replacement: str = ""
+    evidence: list[Evidence] = field(default_factory=list)
+    timeline_trail: list[TimelineEvent] = field(default_factory=list)
+    attribution: GitAttribution | None = None
+    test_gap_analysis: TestGapAnalysis | None = None
+    blast_radius: BlastRadius | None = None
 
 
 @dataclass(frozen=True)
@@ -77,6 +125,10 @@ class InvestigationProposal:
     proposed_patch: str
     file_path: str
     replacement: str
+    timeline_trail: list[TimelineEvent] = field(default_factory=list)
+    attribution: GitAttribution | None = None
+    test_gap_analysis: TestGapAnalysis | None = None
+    blast_radius: BlastRadius | None = None
 
 
 @dataclass
@@ -102,6 +154,9 @@ class AuditEvent:
     action: str
     timestamp: str
     detail: str
+    spiffe_id: str = ""
+    signature: str = ""
+    armor_sanitized: bool = False
 
 
 @dataclass
@@ -120,9 +175,32 @@ class IncidentRecord:
         context = value["context"]
         
         rca_val = value.get("rca")
-        rca = RootCauseAnalysis(
-            **{**rca_val, "evidence": [Evidence(**item) for item in rca_val.get("evidence", [])]}
-        ) if rca_val else None
+        rca = None
+        if rca_val:
+            evidence_list = [Evidence(**item) for item in rca_val.get("evidence", [])]
+            timeline_list = [TimelineEvent(**item) for item in rca_val.get("timeline_trail", [])]
+            
+            attr_val = rca_val.get("attribution")
+            attribution = GitAttribution(**attr_val) if attr_val else None
+            
+            gap_val = rca_val.get("test_gap_analysis")
+            test_gap = TestGapAnalysis(**gap_val) if gap_val else None
+            
+            blast_val = rca_val.get("blast_radius")
+            blast_radius = BlastRadius(**blast_val) if blast_val else None
+
+            rca = RootCauseAnalysis(
+                root_cause=rca_val.get("root_cause", ""),
+                confidence=float(rca_val.get("confidence", 0.0)),
+                culprit_commit=rca_val.get("culprit_commit", ""),
+                proposed_patch=rca_val.get("proposed_patch", ""),
+                replacement=rca_val.get("replacement", ""),
+                evidence=evidence_list,
+                timeline_trail=timeline_list,
+                attribution=attribution,
+                test_gap_analysis=test_gap,
+                blast_radius=blast_radius,
+            )
 
         verification_val = value.get("verification")
         verification = RemediationVerificationReport(

@@ -13,11 +13,25 @@ class ArtifactStoreTest(unittest.TestCase):
         target = root.parent / "NightZero-TestProject"
         with tempfile.TemporaryDirectory() as artifacts:
             store = ArtifactStore(Path(artifacts))
-            record = NightZeroWorkflow(root, store, str(target)).run_seeded_issue()
+            from unittest.mock import MagicMock
+            from nightzero.github import RepositoryEvidence
+            gateway = MagicMock()
+            gateway.get_repository_evidence.return_value = RepositoryEvidence("sha-123", "msg", "demo_target/pricing.py", 'return f"${cents // 100}.00"', "dev", "2026-08-25")
+            record = NightZeroWorkflow(root, store, str(target)).run_seeded_issue(gateway=gateway)
 
             self.assertEqual(record.context.incident_id, store.get(record.context.incident_id).context.incident_id)
             self.assertEqual([record.context.incident_id], [item.context.incident_id for item in store.list()])
             self.assertIsNone(store.get("inc-missing"))
+            
+            rehydrated = store.get(record.context.incident_id)
+            self.assertIsNotNone(rehydrated.rca.timeline_trail)
+            self.assertGreater(len(rehydrated.rca.timeline_trail), 0)
+            self.assertIsNotNone(rehydrated.rca.attribution)
+            self.assertTrue(len(rehydrated.rca.attribution.author) > 0)
+            self.assertIsNotNone(rehydrated.rca.test_gap_analysis)
+            self.assertTrue(len(rehydrated.rca.test_gap_analysis.why_tests_missed) > 0)
+            self.assertIsNotNone(rehydrated.rca.blast_radius)
+            self.assertGreater(len(rehydrated.rca.blast_radius.impacted_endpoints), 0)
 
 
 class _Snapshot:
@@ -65,7 +79,11 @@ class FirestoreArtifactStoreTest(unittest.TestCase):
         root = Path(__file__).parents[1]
         target = root.parent / "NightZero-TestProject"
         with tempfile.TemporaryDirectory() as artifacts:
-            record = NightZeroWorkflow(root, ArtifactStore(Path(artifacts)), str(target)).run_seeded_issue()
+            from unittest.mock import MagicMock
+            from nightzero.github import RepositoryEvidence
+            gateway = MagicMock()
+            gateway.get_repository_evidence.return_value = RepositoryEvidence("sha-123", "msg", "demo_target/pricing.py", 'return f"${cents // 100}.00"', "dev", "2026-08-25")
+            record = NightZeroWorkflow(root, ArtifactStore(Path(artifacts)), str(target)).run_seeded_issue(gateway=gateway)
         store = FirestoreArtifactStore(_FirestoreClient())
         store.save(record)
         self.assertEqual(record.to_dict(), store.get(record.context.incident_id).to_dict())

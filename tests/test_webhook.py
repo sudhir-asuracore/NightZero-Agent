@@ -25,8 +25,8 @@ class FakeGitHubGateway(GitHubGateway):
         self.issue_reads += 1
         return GitHubIssue(issue_number, "Checkout totals are rounded down", "https://github.com/sudhir-asuracore/NightZero-TestProject/issues/142", "Expected $12.34; received $12.00.", "main")
 
-    def get_repository_evidence(self, repository: str, ref: str) -> RepositoryEvidence:
-        return RepositoryEvidence("live-sha", "Fixes pricing display", "demo_target/pricing.py", 'return f"${cents // 100}.00"')
+    def get_repository_evidence(self, repository: str, ref: str, path: str = "demo_target/pricing.py") -> RepositoryEvidence:
+        return RepositoryEvidence("live-sha", "Fixes pricing display", path, 'return f"${cents // 100}.00"')
 
 
 class FakeInvestigator:
@@ -115,7 +115,7 @@ class GitHubWebhookTest(unittest.TestCase):
             self.server.workflow.run_labeled_issue("delivery-unsafe", "sudhir-asuracore/NightZero-TestProject", 142, self.github, UnsafeInvestigator())
 
     def test_firebase_approval_requires_valid_allowlisted_reviewer(self) -> None:
-        record = self.server.workflow.run_seeded_issue()
+        record = self.server.workflow.run_seeded_issue(gateway=self.github)
         environment = patch.dict(os.environ, {"NIGHTZERO_AUTH_MODE": "firebase", "NIGHTZERO_REVIEWER_ALLOWLIST": "reviewer@example.com"})
         environment.start()
         self.addCleanup(environment.stop)
@@ -124,7 +124,7 @@ class GitHubWebhookTest(unittest.TestCase):
         self.assertEqual("reviewer@example.com", response["approval"]["actor"])
 
     def test_firebase_approval_rejects_missing_or_unallowlisted_token(self) -> None:
-        record = self.server.workflow.run_seeded_issue()
+        record = self.server.workflow.run_seeded_issue(gateway=self.github)
         environment = patch.dict(os.environ, {"NIGHTZERO_AUTH_MODE": "firebase", "NIGHTZERO_REVIEWER_ALLOWLIST": "other@example.com"})
         environment.start()
         self.addCleanup(environment.stop)
@@ -145,7 +145,7 @@ class GitHubWebhookTest(unittest.TestCase):
         return response.status, json.loads(response.read())
 
     def test_pull_request_merged_resolves_incident(self) -> None:
-        record = self.server.workflow.run_seeded_issue()
+        record = self.server.workflow.run_seeded_issue(gateway=self.github)
         record.approval = {"pr_number": 42, "branch": "nightzero/inc-test"}
         record.context.status = "APPROVED"
         self.server.store.save(record)
@@ -180,3 +180,13 @@ class GitHubWebhookTest(unittest.TestCase):
         self.assertEqual("RESOLVED", updated.context.status)
         self.assertEqual("PULL_REQUEST_MERGED", updated.approval.get("action"))
         self.assertEqual("octocat", updated.approval.get("merged_by"))
+
+    def test_get_incidents_list_endpoint(self) -> None:
+        connection = http.client.HTTPConnection(*self.server.server_address)
+        connection.request("GET", "/api/v1/incidents?offset=0&limit=10", headers={"Origin": "https://nightzero.web.app"})
+        response = connection.getresponse()
+        self.assertEqual(200, response.status)
+        self.assertEqual("https://nightzero.web.app", response.getheader("Access-Control-Allow-Origin"))
+        data = json.loads(response.read())
+        self.assertIn("incidents", data)
+        self.assertIn("total", data)

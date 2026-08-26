@@ -10,6 +10,7 @@ class IncidentStore(Protocol):
     def save(self, record: IncidentRecord) -> object: ...
     def get(self, incident_id: str) -> IncidentRecord | None: ...
     def list(self) -> list[IncidentRecord]: ...
+    def delete(self, incident_id: str) -> None: ...
     def get_by_delivery_id(self, delivery_id: str) -> IncidentRecord | None: ...
     def claim_delivery_id(self, delivery_id: str, incident_id: str) -> str | None: ...
     def clear_all(self) -> None: ...
@@ -34,6 +35,11 @@ class ArtifactStore:
         if not path.is_file():
             return None
         return IncidentRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
+
+    def delete(self, incident_id: str) -> None:
+        path = artifact_path(self.directory, incident_id)
+        if path.is_file():
+            path.unlink()
 
     def list(self) -> list[IncidentRecord]:
         records = [
@@ -84,9 +90,11 @@ class FirestoreArtifactStore:
 
     @classmethod
     def from_default_credentials(cls) -> "FirestoreArtifactStore":
+        import os
         from google.cloud import firestore
 
-        return cls(firestore.Client())
+        project = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCP_PROJECT") or "nightzero"
+        return cls(firestore.Client(project=project))
 
     def save(self, record: IncidentRecord) -> str:
         self.records.document(record.context.incident_id).set(record.to_dict())
@@ -95,6 +103,9 @@ class FirestoreArtifactStore:
     def get(self, incident_id: str) -> IncidentRecord | None:
         snapshot = self.records.document(incident_id).get()
         return IncidentRecord.from_dict(snapshot.to_dict()) if snapshot.exists else None
+
+    def delete(self, incident_id: str) -> None:
+        self.records.document(incident_id).delete()
 
     def list(self) -> list[IncidentRecord]:
         records = [IncidentRecord.from_dict(snapshot.to_dict()) for snapshot in self.records.stream()]

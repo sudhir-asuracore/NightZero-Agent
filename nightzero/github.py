@@ -23,6 +23,8 @@ class RepositoryEvidence:
     commit_message: str
     path: str
     content: str
+    commit_author: str = ""
+    commit_date: str = ""
 
 
 @dataclass(frozen=True)
@@ -37,7 +39,7 @@ class GitHubGateway:
     def get_issue(self, repository: str, issue_number: int) -> GitHubIssue:
         raise NotImplementedError
 
-    def get_repository_evidence(self, repository: str, ref: str) -> RepositoryEvidence:
+    def get_repository_evidence(self, repository: str, ref: str, path: str = "demo_target/pricing.py") -> RepositoryEvidence:
         raise NotImplementedError
 
     def create_branch(self, repository: str, branch: str, source_commit: str) -> None:
@@ -70,19 +72,24 @@ class GitHubApiGateway(GitHubGateway):
             default_branch=repository_data["default_branch"],
         )
 
-    def get_repository_evidence(self, repository: str, ref: str) -> RepositoryEvidence:
+    def get_repository_evidence(self, repository: str, ref: str, path: str = "demo_target/pricing.py") -> RepositoryEvidence:
         commits = self._get(f"/repos/{repository}/commits?sha={ref}&per_page=1")
-        commit = commits[0]
-        path = "demo_target/pricing.py"
+        commit = commits[0] if isinstance(commits, list) and len(commits) > 0 else {}
         content = self._get(f"/repos/{repository}/contents/{path}?ref={ref}")
+        commit_details = commit.get("commit", {}) if isinstance(commit, dict) else {}
+        author_info = commit_details.get("author", {}) if isinstance(commit_details, dict) else {}
+        commit_author = author_info.get("name") or author_info.get("email") or "github-user"
+        commit_date = author_info.get("date") or ""
         return RepositoryEvidence(
-            commit_sha=commit["sha"],
-            commit_message=commit["commit"]["message"],
+            commit_sha=commit.get("sha", "latest"),
+            commit_message=commit_details.get("message", "Commit"),
             path=path,
-            content=base64.b64decode(content["content"]).decode("utf-8"),
+            content=base64.b64decode(content.get("content", "")).decode("utf-8") if isinstance(content, dict) else "",
+            commit_author=commit_author,
+            commit_date=commit_date,
         )
 
-    def create_branch(self, repository: str, branch: str, source_commit: str) -> None:
+    def create_branch(self, repository: str, branch: str, source_commit: str = "main") -> None:
         try:
             existing = self._get(f"/repos/{repository}/git/ref/heads/{branch}")
             if isinstance(existing, dict) and "object" in existing:
@@ -90,14 +97,25 @@ class GitHubApiGateway(GitHubGateway):
         except RuntimeError as error:
             if "HTTP Error 404" not in str(error):
                 raise
+
+        # Resolve latest SHA from default branch/main for clean branch creation
         try:
-            self._request("POST", f"/repos/{repository}/git/refs", {"ref": f"refs/heads/{branch}", "sha": source_commit})
+            commits = self._get(f"/repos/{repository}/commits?sha=main&per_page=1")
+            target_sha = commits[0]["sha"] if (commits and isinstance(commits, list) and "sha" in commits[0]) else source_commit
+        except Exception:
+            target_sha = source_commit
+
+        try:
+            self._request("POST", f"/repos/{repository}/git/refs", {"ref": f"refs/heads/{branch}", "sha": target_sha})
         except RuntimeError as error:
             if "HTTP Error 422" in str(error):
-                commits = self._get(f"/repos/{repository}/commits?per_page=1")
-                if commits and isinstance(commits, list) and "sha" in commits[0]:
-                    head_sha = commits[0]["sha"]
-                    self._request("POST", f"/repos/{repository}/git/refs", {"ref": f"refs/heads/{branch}", "sha": head_sha})
+                return
+            if "HTTP Error 403" in str(error):
+                repo_info = self._get(f"/repos/{repository}")
+                def_branch = repo_info.get("default_branch", "main")
+                head_commits = self._get(f"/repos/{repository}/commits?sha={def_branch}&per_page=1")
+                if head_commits and isinstance(head_commits, list) and "sha" in head_commits[0]:
+                    self._request("POST", f"/repos/{repository}/git/refs", {"ref": f"refs/heads/{branch}", "sha": head_commits[0]["sha"]})
                     return
             raise
 
@@ -105,18 +123,17 @@ class GitHubApiGateway(GitHubGateway):
         source = self._get(f"/repos/{repository}/contents/{file_path}?ref={branch}")
         original = base64.b64decode(source["content"]).decode("utf-8")
 
-        if "demo_target/pricing.py" in file_path:
-            import re
-            patched = re.sub(r'return f"\${cents [^"]+}"', replacement, original)
-            if patched == original:
-                patched = re.sub(r'return .*', replacement, original)
+        import re
+        clean_repl = replacement.strip()
+        if "return" in clean_repl and "def " not in clean_repl:
+            # Replace the return line in the target file
+            patched = re.sub(r'^\s*return .*', lambda _: f'    {clean_repl}', original, flags=re.MULTILINE)
+        elif "def " in clean_repl:
+            patched = clean_repl
         elif replacement in original:
             patched = original
         else:
-            patched = original.replace('return f"${cents // 100}.00"', replacement).replace('return f"${cents / 100:.2f}"', replacement)
-
-        if patched == original and replacement not in original:
-            patched = original.rstrip() + f"\n# NightZero verified remediation\n# {replacement}\n"
+            patched = original.rstrip() + f"\n# NightZero automated update\n# {replacement}\n"
 
         result = self._request("PUT", f"/repos/{repository}/contents/{file_path}", {
             "message": "NightZero verified automated remediation",
