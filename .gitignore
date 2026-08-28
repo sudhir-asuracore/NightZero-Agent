@@ -1,6 +1,46 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-artifacts/
-.junie/
-docs/*.swp
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
 .env
+.env.*
+.venv/
+env/
+venv/
+ENV/
+
+# Node & package artifacts
+node_modules/
+package-lock.json
+package.json
+
+# Local and test artifacts
+artifacts/
+.pytest_cache/
+.junie/
+*.swp
+*.log
+docs/*.swp
