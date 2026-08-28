@@ -1,67 +1,83 @@
-# NightZero Agent
+# NightZero Agent 🌌
+### Multi-Subagent Autonomous SRE Engine powered by Google Cloud Vertex AI & ADK
 
-NightZero Agent turns a reproducible GitHub issue into an evidence-backed, sandbox-verified fix for human approval. It clones `NightZero-TestProject` into an isolated checkout. This MVP deliberately creates a **simulated** pull-request authorization and never deploys to production.
+[![Live Service](https://img.shields.io/badge/Google%20Cloud%20Run-nightzero--agent-4285F4?style=for-the-badge&logo=googlecloud)](https://nightzero-agent-164161200079.us-central1.run.app)
+[![Vertex AI Gemini](https://img.shields.io/badge/AI%20Engine-Vertex%20AI%20Gemini%202.5-8E75FF?style=for-the-badge&logo=googlegemini)](https://cloud.google.com/vertex-ai)
+[![Enterprise Security](https://img.shields.io/badge/Security-Model%20Armor%20%2B%20SPIFFE-10B981?style=for-the-badge)](https://nightzero.web.app)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=for-the-badge)](LICENSE)
 
-## Workspace
+---
 
-Keep the three private repositories adjacent in one working directory:
+## 📌 Overview
 
-```text
-NightZero/
-├── NightZero-Agent/
-├── NightZero-ControlPanel/
-└── NightZero-TestProject/
+**NightZero Agent** is the core backend autonomous engine of the NightZero platform. It continuously ingests production telemetry alerts from Google Cloud Logging error sinks, orchestrates multi-subagent root-cause forensics via **Gemini 2.5 Flash/Pro**, sanitizes payloads via **Model Armor**, enforces **SPIFFE/X.509** identity, verifies candidate patches in ephemeral polyglot sandboxes, and gates GitHub Pull Request remediation behind cryptographic human approval.
+
+---
+
+## 🏛️ Multi-Subagent Architecture
+
+```mermaid
+flowchart TD
+    Telemetry["GCP Cloud Logging Sink\n(POST /api/v1/webhooks/gcp-logging)"] --> Triage["1. Triage Subagent (ADK)"]
+    Triage --> Armor{"Model Armor Defense\n(Prompt Injection & Redaction)"}
+    Armor --> Gateway["Agent Gateway Policy Interceptor"]
+    Gateway --> Inspector["2. Code Inspector Subagent (GitHub MCP)"]
+    Inspector --> RCA["3. Gemini RCA Subagent (Vertex AI 2.5)"]
+    RCA --> Sandbox["4. Sandbox Verification Subagent\n(Isolated Test Runner)"]
+    Sandbox --> Store[("Cloud Firestore\n(Incident Store & Memory Bank)")]
+    Sandbox --> Approval{"Human Approval Gate\n(POST /api/v1/incidents/:id/approve)"}
+    Approval --> Remediation["5. Remediation PR Subagent\n(USER_DELEGATED Authority)"]
+    Remediation --> GitHubPR["GitHub Draft Pull Request"]
 ```
 
-The Agent owns the remediation workflow, sandbox checkout, artifacts, and any future GitHub branch/PR writes. The Control Panel is an API client only; it does not receive GitHub credentials.
+---
 
-## Run locally
+## ⚡ Key Capabilities
 
-Use Python 3.11+ and an SSH identity that has read access to `NightZero-TestProject`:
+1. **Native Vertex AI Integration**: Uses `google-genai` SDK with Vertex AI backend (`project=nightzero`, `location=us-central1`). Supports `gemini-2.5-flash` (~0.8s latency), `gemini-2.5-pro` (max reasoning), and `gemini-2.5-flash-lite`.
+2. **Model Armor AI Firewall**: Inline prompt injection defense, credential/PII redaction, and code patch AST safety analysis.
+3. **SPIFFE Cryptographic Identity**: Attested personas (`spiffe://nightzero.io/agent/*`) with HMAC-SHA256 Agent Identity Tokens (`ait-sha256-...`).
+4. **Self-Learning Polyglot Sandbox**: Auto-discovers language test runners (Python, TS/JS, Go, Rust, Java) and caches profiles in Firestore Memory Bank.
+5. **Human-in-the-Loop Gate**: Strictly enforces `USER_DELEGATED` authority before creating GitHub branches or pull requests.
+
+---
+
+## 🛠️ Local Development & Quickstart
 
 ```bash
+# 1. Setup Virtual Environment
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+
+# 2. Configure Environment
 cp .env.example .env
-# Edit .env with the Agent-only credentials, then load it into this shell.
-set -a && source .env && set +a
-python -m unittest discover -s tests -v
-python -m nightzero
+
+# 3. Run Test Suite
+python3 -m unittest discover -s tests -v
+
+# 4. Start the Agent Service
+python3 -m nightzero
 ```
 
-The Agent API listens on `http://localhost:8080` by default:
+---
 
-- `GET /health`
-- `GET /api/v1/incidents`
-- `GET /api/v1/incidents/{incident_id}`
-- `POST /api/v1/incidents/{incident_id}/approve`
+## 📡 REST API Reference
 
-Set `PORT` to change the listener and `NIGHTZERO_CORS_ORIGIN` to the exact Control Panel origin. Approval requires the demo-only token `nightzero-demo`; inspect persisted evidence in the ignored `artifacts/` directory.
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/health` | Service health status and readiness check |
+| `GET` | `/api/v1/incidents` | List all triaged and remediated incidents |
+| `GET` | `/api/v1/incidents/{id}` | Fetch full incident details, AST diff, and timeline |
+| `POST` | `/api/v1/incidents/{id}/approve` | Cryptographically authorize patch and open GitHub Draft PR |
+| `GET` | `/api/v1/settings` | Get active model and available Vertex AI catalog |
+| `POST` | `/api/v1/settings` | Update active model (`gemini-2.5-flash`, `gemini-2.5-pro`) |
+| `GET` | `/api/v1/governance` | Fetch Agent Gateway RBAC and Model Armor telemetry |
+| `POST` | `/api/v1/simulate-incident` | Ingest chaos outage regression for live demo verification |
+| `POST` | `/api/v1/webhooks/gcp-logging` | Cloud Logging error sink ingestion webhook |
+| `POST` | `/api/v1/webhooks/github` | GitHub issue and pull request event webhook |
 
-## Local GitHub webhook tunnel
+---
 
-GitHub needs a public HTTPS destination and cannot call `localhost` directly. With the Agent running, install [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) and run:
-
-```bash
-./scripts/start-github-webhook-tunnel.sh
-```
-
-The script verifies `http://127.0.0.1:${PORT:-8080}/health`, then starts a temporary Cloudflare Quick Tunnel. Copy the printed HTTPS URL and configure GitHub's webhook payload URL as `<printed-url>/api/v1/webhooks/github`. The URL changes whenever the tunnel restarts; stop it with `Ctrl+C` after testing.
-
-## Credential boundary
-
-Copy `.env.example` to the ignored `.env` file and supply the values locally. For live remediation, create a fine-grained GitHub token scoped only to `NightZero-TestProject` with `Contents`, `Issues`, and `Pull requests` read/write access; configure the same `NIGHTZERO_WEBHOOK_SECRET` in GitHub's Issues webhook; and set `GOOGLE_API_KEY` for Gemini/ADK. Do not put GitHub tokens, webhook secrets, SSH private keys, or approval secrets in the Control Panel environment or source tree.
-
-## Demo narrative
-
-1. A GitHub issue reports that `$12.34` renders as `$12.00`.
-2. NightZero links the evidence to commit `8f3c2a1`, captures the failing test, and patches a temporary sandbox only.
-3. The incident card shows the diff and passing verification before an authenticated simulated PR approval.
-
-## Cloud Run reproduction
-
-The container is Cloud Run compatible; deploy it to a dedicated demo project rather than a production project:
-
-```bash
-gcloud run deploy nightzero-demo --source . --region us-central1 --allow-unauthenticated
-```
-
-The local `artifacts/` directory is intentionally ephemeral in this demo container. A production deployment should replace it with a restricted persistence service and use an identity-aware approval endpoint.
+## 📜 License
+Licensed under the [Apache License 2.0](LICENSE).
