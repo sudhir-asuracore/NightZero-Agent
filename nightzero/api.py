@@ -271,6 +271,8 @@ class AgentApiHandler(BaseHTTPRequestHandler):
                 if token_in_payload == DEMO_APPROVAL_TOKEN:
                     actor = str(payload.get("actor", "") or "reviewer")
                     return actor, DEMO_APPROVAL_TOKEN, True
+                if "Token expired" in str(exc) or "expired" in str(exc).lower():
+                    raise PermissionError("Firebase authentication token expired. Please refresh the page or sign in again.") from exc
                 raise
 
         actor = str(payload.get("actor", "") or "reviewer")
