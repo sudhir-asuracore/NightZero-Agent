@@ -241,10 +241,10 @@ class GeminiRCASubagent:
         )
 
         test_gap = proposal.test_gap_analysis or TestGapAnalysis(
-            why_tests_missed=f"Test suites did not exercise edge case for {sanitized_log[:60]}.",
-            blindspot_summary=f"Unexercised branch or boundary condition in {evidence.path}.",
-            recommended_test_name="test_remediation_boundary_case",
-            recommended_test_code="def test_remediation_boundary_case(self) -> None:\n    # Auto-synthesized test gap coverage\n    pass",
+            why_tests_missed="Not applicable for this incident.",
+            blindspot_summary="Not applicable for this incident.",
+            recommended_test_name="",
+            recommended_test_code="",
         )
 
         blast_radius = proposal.blast_radius or BlastRadius(
